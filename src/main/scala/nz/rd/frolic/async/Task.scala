@@ -43,38 +43,11 @@ object Task {
 
   case class Do[+A](f: () => Task[A]) extends Task[A]
   case class Sequence[A,+B](first: Task[A], second: Done[A] => Task[B]) extends Task[B]
+//  case class Schedule[+A](s: Scheduling, t: Task[A]) extends Task[A]
+//  case class Spawn[+A](child: Task[_], k: Task[A]) extends Task[A]
 
   val Unit = Return[Unit](())
   val Empty = Throw(new NoSuchElementException("Task does not contain a value"))
-
-  //  case class Spawn[A,+B](child: Task[A], scheduling: Scheduling, next: Task[B]) extends Task[A]
-//
-//  trait Scheduling
-//  object Scheduling {
-//    case class SameThread(first: Boolean) extends Scheduling
-//  }
-
-//  @tailrec
-//  def run[A](t: Task[A], k: Done[A] => _): Unit = {
-//    t match {
-//      case r@Return(_) => k(r)
-//      case t@Throw(_) => k(t)
-//      case Do(f) => {
-//        val next: Task[_] = try f() catch {
-//          case NonFatal(t) => Throw(t)
-//        }
-//        run(next, k)
-//      }
-//      case Sequence(first, second) =>
-//        run(first, sequenceK(first, second, k))
-//    }
-//  }
-//  private def sequenceK[A, B](first: Task[A], second: Done[A] => Task[B], k: Done[B] => _): Done[A] => _ = {
-//    { firstResult: Done[A] =>
-//      val secondTask: Task[B] = second(firstResult)
-//      run(secondTask, k)
-//    }
-//  }
 
   private final class Fiber(var task: Task[_], var stack: AnyRef)
 

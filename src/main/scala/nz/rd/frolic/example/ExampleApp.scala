@@ -1,20 +1,22 @@
 package nz.rd.frolic.example
 
-import nz.rd.frolic.FrolicApp
-import nz.rd.frolic.async.AFunc
-import nz.rd.frolic.entity.Field.EntityWithFields
-import nz.rd.frolic.http.{Response, Message, RequestHandler}
+import io.netty.buffer.Unpooled
+import io.netty.handler.codec.http.HttpHeaderNames._
+import io.netty.handler.codec.http.HttpResponseStatus._
+import io.netty.handler.codec.http.HttpVersion._
+import io.netty.handler.codec.http.{DefaultFullHttpResponse, FullHttpResponse, HttpRequest}
+import nz.rd.frolic.Frolic
+import nz.rd.frolic.async.Task
 
-object ExampleApp extends FrolicApp {
-  override def start(defaultLogic: FrolicApp.Logic): FrolicApp.Logic = {
-    defaultLogic.copy(
-      requestHandler = new RequestHandler(AFunc.fromFunction { req =>
-        if (req.rawPath == "/") {
-          new Response(defaultLogic.httpModels.emptyResponse.entity.set(Message.content, s"Hello world?: ${req.rawPath}"))
-        } else {
-          new Response(defaultLogic.httpModels.emptyResponse.entity.set(Message.content, s"Unknown path: ${req.rawPath}"))
-        }
-      })
-    )
+object ExampleApp {
+  def main(args: Array[String]): Unit = {
+    Frolic.start { request: HttpRequest =>
+      val response: FullHttpResponse = new DefaultFullHttpResponse(
+        HTTP_1_1, OK, Unpooled.wrappedBuffer("Hello world".getBytes("utf-8"))
+      )
+      response.headers().set(CONTENT_TYPE, "text/plain")
+      response.headers().setInt(CONTENT_LENGTH, response.content().readableBytes())
+      Task.Return(response)
+    }
   }
 }
