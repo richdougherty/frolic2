@@ -1,7 +1,5 @@
 package nz.rd.frolic.async
 
-import Task.-->
-
 sealed trait Reader[-A,+B]
 object Reader {
   case class ReadElement[-A,+B](f: A --> Reader[A,B]) extends Reader[A,B]

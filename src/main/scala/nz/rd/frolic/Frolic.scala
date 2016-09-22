@@ -8,13 +8,15 @@ import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.handler.codec.http._
 import io.netty.handler.ssl.util.SelfSignedCertificate
 import io.netty.handler.ssl.{SslContext, SslContextBuilder}
+import nz.rd.frolic.async.Continuation
 import nz.rd.frolic.async.Task
 import nz.rd.frolic.async.Task.{Do, Throw}
 
+import Continuation.-->
 
 object Frolic {
 
-  def start(f: HttpRequest => Task[HttpResponse]): Unit = {
+  def start(f: (ChannelHandlerContext, HttpRequest) --> HttpResponse): Unit = {
 
     def serverHandler = new ChannelInboundHandlerAdapter {
 

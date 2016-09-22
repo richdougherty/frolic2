@@ -6,10 +6,12 @@ import scala.annotation.tailrec
 import scala.concurrent.{Future, Promise}
 import scala.util.control.NonFatal
 
+import Continuation.-->
+
 trait Task[+A] {
   import Task._
 
-  def sequence[B](f: Done[A] => Task[B]): Task[B] = Sequence(this, f)
+  def sequence[B](f: Done[A] => Task[B]): Task[B] = Sequence(this, Continuation(f))
 
   def map[B](f: A => B): Task[B] = sequence {
     case Return(v) => Return(f(v))
@@ -46,7 +48,6 @@ object Task {
     val Empty = Throw(new NoSuchElementException("Task does not contain a value"))
   }
 
-  type -->[-A,+B] = (Task.Done[A] => Task[B])
 
   case class Do[+A](f: () => Task[A]) extends Task[A]
   case class Sequence[A,+B](first: Task[A], second: (A --> B)) extends Task[B]
@@ -95,12 +96,12 @@ object Task {
             case null =>
               fiber.stack = second
             case f: Function1[_, _] =>
-              val l = new ArrayList[AnyRef](4)
+              val l = new ArrayList[Any](4)
               l.add(f)
               l.add(second)
               fiber.stack = l
             case m: ArrayList[_] =>
-              m.asInstanceOf[ArrayList[_ => _]].add(second)
+              m.asInstanceOf[ArrayList[Any]].add(second)
           }
           loop()
       }
