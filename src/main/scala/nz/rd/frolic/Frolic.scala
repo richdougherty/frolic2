@@ -10,9 +10,7 @@ import io.netty.handler.logging.{LogLevel, LoggingHandler}
 import io.netty.handler.ssl.SslContext
 import io.netty.handler.ssl.util.SelfSignedCertificate
 import nz.rd.frolic.async.Task
-
-import scala.concurrent.Await
-import scala.concurrent.duration.Duration
+import nz.rd.frolic.async.Task.{Do, Throw}
 
 
 object Frolic {
@@ -33,18 +31,27 @@ object Frolic {
 
         msg match {
           case req: HttpRequest =>
-
             if (HttpHeaderUtil.is100ContinueExpected(req)) {
               ctx.write(new DefaultFullHttpResponse(HTTP_1_1, CONTINUE))
             }
             val keepAlive = HttpHeaderUtil.isKeepAlive(req)
-            val response: HttpResponse = Await.result(Task.runToFuture(f(req)), Duration.Inf)
-            if (!keepAlive) {
-              ctx.write(response).addListener(ChannelFutureListener.CLOSE)
-            } else {
-              response.headers().set(CONNECTION, HttpHeaderValues.KEEP_ALIVE)
-              ctx.write(response)
-            }
+            val t: Task[HttpResponse] = Do(() => f(req))
+            Task.run(t.sequence {
+              case Task.Return(response) =>
+                if (!keepAlive) {
+                  ctx.write(response).addListener(ChannelFutureListener.CLOSE)
+                } else {
+                  response.headers().set(CONNECTION, HttpHeaderValues.KEEP_ALIVE)
+                  ctx.write(response)
+                  ctx.flush()
+                }
+                Task.Unit
+              case Throw(cause) =>
+                System.err.println("Failure handling request")
+                cause.printStackTrace()
+                ctx.close()
+                Task.Unit
+            })
           case _ =>
             () // Ignore
         }

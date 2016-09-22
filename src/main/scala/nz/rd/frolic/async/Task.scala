@@ -26,11 +26,10 @@ trait Task[+A] {
     case t@Throw(_) => t
   }
 
-  def liftDone: Task[Done[A]] = sequence { d: Done[A] =>
-    Task.Return(d)
-  }
-  def unliftDone[B](implicit ev: A <:< Done[B]): Task[B] = sequence {
-    case Return(v) => ev(v)
+  def liftDone: Task[Done[A]] = sequence(Task.Return(_))
+
+  def flatten[B](implicit witness: A <:< Task[B]): Task[B] = sequence {
+    case Return(v) => witness(v)
     case t@Throw(_) => t
   }
 }
