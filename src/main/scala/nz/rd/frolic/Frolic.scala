@@ -6,9 +6,8 @@ import io.netty.channel.nio.NioEventLoopGroup
 import io.netty.channel.socket.SocketChannel
 import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.handler.codec.http._
-import io.netty.handler.logging.{LogLevel, LoggingHandler}
-import io.netty.handler.ssl.SslContext
 import io.netty.handler.ssl.util.SelfSignedCertificate
+import io.netty.handler.ssl.{SslContext, SslContextBuilder}
 import nz.rd.frolic.async.Task
 import nz.rd.frolic.async.Task.{Do, Throw}
 
@@ -17,7 +16,7 @@ object Frolic {
 
   def start(f: HttpRequest => Task[HttpResponse]): Unit = {
 
-    def serverHandler = new ChannelHandlerAdapter {
+    def serverHandler = new ChannelInboundHandlerAdapter {
 
       override def channelReadComplete(ctx: ChannelHandlerContext): Unit = {
         ctx.flush()
@@ -31,10 +30,10 @@ object Frolic {
 
         msg match {
           case req: HttpRequest =>
-            if (HttpHeaderUtil.is100ContinueExpected(req)) {
+            if (HttpUtil.is100ContinueExpected(req)) {
               ctx.write(new DefaultFullHttpResponse(HTTP_1_1, CONTINUE))
             }
-            val keepAlive = HttpHeaderUtil.isKeepAlive(req)
+            val keepAlive = HttpUtil.isKeepAlive(req)
             val t: Task[HttpResponse] = Do(() => f(req))
             Task.run(t.sequence {
               case Task.Return(response) =>
@@ -67,7 +66,7 @@ object Frolic {
 
       val sslCtx: SslContext = {
         val ssc = new SelfSignedCertificate()
-        SslContext.newServerContext(ssc.certificate(), ssc.privateKey())
+        SslContextBuilder.forServer(ssc.certificate(), ssc.privateKey()).build()
       }
 
       override def initChannel(ch: SocketChannel) {
@@ -85,7 +84,6 @@ object Frolic {
       b.option[Integer](ChannelOption.SO_BACKLOG, 1024)
       b.group(bossGroup, workerGroup)
         .channel(classOf[NioServerSocketChannel])
-        .handler(new LoggingHandler(LogLevel.INFO))
         .childHandler(serverInitializer)
       val ch: Channel = b.bind(8443).sync().channel()
       println("Server started on port 8443.")
