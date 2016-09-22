@@ -45,12 +45,12 @@ object Frolic {
                   ctx.write(response)
                   ctx.flush()
                 }
-                Task.Unit
+                Task.Return.Unit
               case Throw(cause) =>
                 System.err.println("Failure handling request")
                 cause.printStackTrace()
                 ctx.close()
-                Task.Unit
+                Task.Return.Unit
             })
           case _ =>
             () // Ignore

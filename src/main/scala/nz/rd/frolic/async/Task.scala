@@ -22,7 +22,7 @@ trait Task[+A] {
   def foreach(f: A => Unit): Task[Unit] = map(f)
   def filter(f: A => Boolean): Task[A] = sequence {
     case r@Return(v) =>
-      if (f(v)) r else Empty
+      if (f(v)) r else Throw.Empty
     case t@Throw(_) => t
   }
 
@@ -38,15 +38,20 @@ object Task {
   sealed trait Done[+A] extends Task[A]
 
   case class Return[+A](value: A) extends Done[A]
+  object Return {
+    val Unit = Return[Unit](())
+  }
   case class Throw(throwable: Throwable) extends Done[Nothing]
+  object Throw {
+    val Empty = Throw(new NoSuchElementException("Task does not contain a value"))
+  }
+
+  type -->[-A,+B] = (Task.Done[A] => Task[B])
 
   case class Do[+A](f: () => Task[A]) extends Task[A]
-  case class Sequence[A,+B](first: Task[A], second: Done[A] => Task[B]) extends Task[B]
+  case class Sequence[A,+B](first: Task[A], second: (A --> B)) extends Task[B]
 //  case class Schedule[+A](s: Scheduling, t: Task[A]) extends Task[A]
 //  case class Spawn[+A](child: Task[_], k: Task[A]) extends Task[A]
-
-  val Unit = Return[Unit](())
-  val Empty = Throw(new NoSuchElementException("Task does not contain a value"))
 
   private final class Fiber(var task: Task[_], var stack: AnyRef)
 
@@ -108,10 +113,10 @@ object Task {
     run(t.sequence {
       case Return(v) =>
         p.success(v)
-        Unit
+        Return.Unit
       case t@Throw(cause) =>
         p.failure(cause)
-        Unit
+        Return.Unit
     })
     p.future
   }
