@@ -6,50 +6,48 @@ import scala.annotation.tailrec
 import scala.concurrent.{Future, Promise}
 import scala.util.control.NonFatal
 
-import Continuation.-->
-
 trait Task[+A] {
   import Task._
 
-  def sequence[B](f: Done[A] => Task[B]): Task[B] = Sequence(this, Continuation(f))
+  def andThen[B](f: Result[A] => Task[B]): Task[B] = Sequence(this, Continuation(f))
 
-  def map[B](f: A => B): Task[B] = sequence {
-    case Return(v) => Return(f(v))
+  def map[B](f: A => B): Task[B] = andThen {
+    case Value(v) => Value(f(v))
     case t@Throw(_) => t
   }
-  def flatMap[B](f: A => Task[B]): Task[B] = sequence {
-    case Return(v) => f(v)
+  def flatMap[B](f: A => Task[B]): Task[B] = andThen {
+    case Value(v) => f(v)
     case t@Throw(_) => t
   }
   def foreach(f: A => Unit): Task[Unit] = map(f)
-  def filter(f: A => Boolean): Task[A] = sequence {
-    case r@Return(v) =>
+  def filter(f: A => Boolean): Task[A] = andThen {
+    case r@Value(v) =>
       if (f(v)) r else Throw.Empty
     case t@Throw(_) => t
   }
 
-  def liftDone: Task[Done[A]] = sequence(Task.Return(_))
+  def liftDone: Task[Result[A]] = andThen(Task.Value(_))
 
-  def flatten[B](implicit witness: A <:< Task[B]): Task[B] = sequence {
-    case Return(v) => witness(v)
+  def flatten[B](implicit witness: A <:< Task[B]): Task[B] = andThen {
+    case Value(v) => witness(v)
     case t@Throw(_) => t
   }
 }
 
 object Task {
-  sealed trait Done[+A] extends Task[A]
+  sealed trait Result[+A] extends Task[A]
 
-  case class Return[+A](value: A) extends Done[A]
-  object Return {
-    val Unit = Return[Unit](())
+  case class Value[+A](value: A) extends Result[A]
+  object Value {
+    val Unit = Value[Unit](())
   }
-  case class Throw(throwable: Throwable) extends Done[Nothing]
+  case class Throw(throwable: Throwable) extends Result[Nothing]
   object Throw {
     val Empty = Throw(new NoSuchElementException("Task does not contain a value"))
   }
 
-
-  case class Do[+A](f: () => Task[A]) extends Task[A]
+  case class DoFunc[+A](f: () => A) extends Task[A]
+  case class DoTask[+A](f: () => Task[A]) extends Task[A]
   case class Sequence[A,+B](first: Task[A], second: (A --> B)) extends Task[B]
 //  case class Schedule[+A](s: Scheduling, t: Task[A]) extends Task[A]
 //  case class Spawn[+A](child: Task[_], k: Task[A]) extends Task[A]
@@ -62,12 +60,12 @@ object Task {
     def loop(): Unit = {
       fiber.task match {
         case null => throw new IllegalStateException("Fiber has already completed")
-        case d: Done[_] =>
+        case d: Result[_] =>
           fiber.stack match {
             case null =>
               fiber.task = null
-            case f: Function1[_, _] =>
-              val k = f.asInstanceOf[Done[Any] => Task[_]]
+            case f: Continuation[_, _] =>
+              val k = f.asInstanceOf[Continuation[Any,_]]
               fiber.task = try k(d) catch {
                 case NonFatal(t) => Throw(t)
               }
@@ -78,14 +76,19 @@ object Task {
               ()
             case l: ArrayList[_] =>
               val i: Int = l.size - 1
-              val k = l.get(i).asInstanceOf[Done[Any] => Task[_]]
+              val k = l.get(i).asInstanceOf[Continuation[Any,_]]
               l.remove(i)
               fiber.task = try k(d) catch {
                 case NonFatal(t) => Throw(t)
               }
               loop()
           }
-        case Do(f) =>
+        case DoFunc(f) =>
+          fiber.task = try Value(f()) catch {
+            case NonFatal(t) => Throw(t)
+          }
+          loop()
+        case DoTask(f) =>
           fiber.task = try f() catch {
             case NonFatal(t) => Throw(t)
           }
@@ -95,7 +98,7 @@ object Task {
           fiber.stack match {
             case null =>
               fiber.stack = second
-            case f: Function1[_, _] =>
+            case f: Continuation[_, _] =>
               val l = new ArrayList[Any](4)
               l.add(f)
               l.add(second)
@@ -111,13 +114,13 @@ object Task {
 
   def runToFuture[A](t: Task[A]): Future[A] = {
     val p = Promise[A]()
-    run(t.sequence {
-      case Return(v) =>
+    run(t.andThen {
+      case Value(v) =>
         p.success(v)
-        Return.Unit
+        Value.Unit
       case t@Throw(cause) =>
         p.failure(cause)
-        Return.Unit
+        Value.Unit
     })
     p.future
   }

@@ -8,11 +8,10 @@ import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.handler.codec.http._
 import io.netty.handler.ssl.util.SelfSignedCertificate
 import io.netty.handler.ssl.{SslContext, SslContextBuilder}
+import nz.rd.frolic.async.-->
 import nz.rd.frolic.async.Continuation
 import nz.rd.frolic.async.Task
-import nz.rd.frolic.async.Task.{Do, Throw}
-
-import Continuation.-->
+import nz.rd.frolic.async.Task.{DoFunc, Throw}
 
 object Frolic {
 
@@ -36,9 +35,9 @@ object Frolic {
               ctx.write(new DefaultFullHttpResponse(HTTP_1_1, CONTINUE))
             }
             val keepAlive = HttpUtil.isKeepAlive(req)
-            val t: Task[HttpResponse] = Do(() => f(req))
-            Task.run(t.sequence {
-              case Task.Return(response) =>
+            val t: Task[HttpResponse] = Task.Sequence(Task.Value((ctx, req)), f)
+            Task.run(t.andThen {
+              case Task.Value(response) =>
                 if (!keepAlive) {
                   ctx.write(response).addListener(ChannelFutureListener.CLOSE)
                 } else {
@@ -46,12 +45,12 @@ object Frolic {
                   ctx.write(response)
                   ctx.flush()
                 }
-                Task.Return.Unit
+                Task.Value.Unit
               case Throw(cause) =>
                 System.err.println("Failure handling request")
                 cause.printStackTrace()
                 ctx.close()
-                Task.Return.Unit
+                Task.Value.Unit
             })
           case _ =>
             () // Ignore
