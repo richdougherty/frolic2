@@ -11,6 +11,8 @@ trait Interpreter {
   def run(t: Task[_]): Unit
 }
 
+final object FunctionalInterpreter extends FunctionalInterpreter
+
 class FunctionalInterpreter extends Interpreter {
 
   override def run(t: Task[_]): Unit = {
@@ -26,17 +28,18 @@ class FunctionalInterpreter extends Interpreter {
             step(next, tail)
           case Continuation.Stop => ()
         }
-      case DoFunc(f) =>
-        val next = try Value(f()) catch {
+      case e: Eval[_] =>
+        val next = try Value(e()) catch {
+          case NonFatal(t) => Throw(t)
+        }
+        step(next, stack)
+      case fe: FlatEval[_] =>
+        val next = try fe() catch {
           case NonFatal(t) => Throw(t)
         }
         step(next, stack)
       case Sequence(t, k) =>
         step(t, k.asInstanceOf[Any --> Any] +: stack)
-      case DoTask(f) =>
-        val next = try f() catch {
-          case NonFatal(t) => Throw(t)
-        }
       case Suspend(suspender) =>
         // FIXME: Think about how to handle exceptions in suspender
         suspender { result: Result[_] => stepNoTailCall(result, stack) }
@@ -81,13 +84,13 @@ class ImperativeInterpreter extends Interpreter {
               }
               loop()
           }
-        case DoFunc(f) =>
-          fiber.task = try Value(f()) catch {
+        case e: Eval[_] =>
+          fiber.task = try Value(e()) catch {
             case NonFatal(t) => Throw(t)
           }
           loop()
-        case DoTask(f) =>
-          fiber.task = try f() catch {
+        case fe: FlatEval[_] =>
+          fiber.task = try fe() catch {
             case NonFatal(t) => Throw(t)
           }
           loop()
