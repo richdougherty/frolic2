@@ -2,7 +2,7 @@ package nz.rd.frolic
 
 import io.undertow.Undertow
 import io.undertow.server.{HttpHandler, HttpServerExchange}
-import nz.rd.frolic.async.{-->, Task}
+import nz.rd.frolic.async.{-->, FunctionalInterpreter, Task}
 
 object Frolic {
 
@@ -19,7 +19,7 @@ object Frolic {
             cause.printStackTrace()
             Task.Value.Unit
         }
-        Task.run(t)
+        new FunctionalInterpreter().run(t)
       }
     }
 

@@ -16,5 +16,11 @@ object Continuation {
   def lift[A,B](f: A => B) = new Continuation[A,B] {
     override def apply(d: Task.Result[A]) = d.map(f)
   }
+
+  sealed trait Stack[A,B] {
+    def +:[C,A1<:A](k: Continuation[C,A1]): Stack[C,B] = Cons[C,A,B](k, this)
+  }
+  case class Cons[A,B,C](head: Continuation[A,B], tail: Stack[B,C]) extends Stack[A,C]
+  case object Stop extends Stack[Any,Nothing]
 }
 
