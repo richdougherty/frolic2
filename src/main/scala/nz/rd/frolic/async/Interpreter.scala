@@ -55,8 +55,8 @@ private object ImperativeInterpreter {
 
 class ImperativeInterpreter extends Interpreter {
   import ImperativeInterpreter.Fiber
-  override def run(t: Task[_]): Unit = {
-    val fiber: Fiber = new Fiber(t, null)
+  override def run(t: Task[_]): Unit = resume(new Fiber(t, null))
+  private def resume(fiber: Fiber): Unit = {
     @tailrec
     def loop(): Unit = {
       fiber.task match {
@@ -108,6 +108,11 @@ class ImperativeInterpreter extends Interpreter {
               m.asInstanceOf[ArrayList[Any]].add(second)
           }
           loop()
+        case Suspend(suspend) =>
+          suspend { result: Task.Result[Any] =>
+            fiber.task = result
+            resume(fiber)
+          }
       }
     }
     loop()
