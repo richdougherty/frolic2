@@ -5,26 +5,26 @@ import scala.concurrent.{Future, Promise}
 trait Task[+A] {
   import Task._
 
-  def andThen[B](f: Result[A] => Task[B]): Task[B] = Sequence(this, Continuation(f))
+  def sequence[B](f: Result[A] => Task[B]): Task[B] = Sequence(this, Continuation(f))
 
-  def map[B](f: A => B): Task[B] = andThen {
+  def map[B](f: A => B): Task[B] = sequence {
     case Value(v) => Value(f(v))
     case t@Throw(_) => t
   }
-  def flatMap[B](f: A => Task[B]): Task[B] = andThen {
+  def flatMap[B](f: A => Task[B]): Task[B] = sequence {
     case Value(v) => f(v)
     case t@Throw(_) => t
   }
   def foreach(f: A => Unit): Task[Unit] = map(f)
-  def filter(f: A => Boolean): Task[A] = andThen {
+  def filter(f: A => Boolean): Task[A] = sequence {
     case r@Value(v) =>
       if (f(v)) r else Throw.Empty
     case t@Throw(_) => t
   }
 
-  def liftDone: Task[Result[A]] = andThen(Task.Value(_))
+  def liftDone: Task[Result[A]] = sequence(Task.Value(_))
 
-  def flatten[B](implicit witness: A <:< Task[B]): Task[B] = andThen {
+  def flatten[B](implicit witness: A <:< Task[B]): Task[B] = sequence {
     case Value(v) => witness(v)
     case t@Throw(_) => t
   }
@@ -68,7 +68,7 @@ object Task {
 
   def toFuture[A](t: Task[A]): (Task[Unit], Future[A]) = {
     val promise = Promise[A]()
-    val promiseTask: Task[Unit] = t.andThen {
+    val promiseTask: Task[Unit] = t.sequence {
       case Value(v) =>
         promise.success(v)
         Value.Unit

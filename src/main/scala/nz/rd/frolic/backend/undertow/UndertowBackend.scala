@@ -27,13 +27,16 @@ object UndertowBackend {
     def httpHandler = new HttpHandler {
 
       override def handleRequest(exchange: HttpServerExchange): Unit = {
-        val t: Task[Unit] = Task.Sequence(Task.Value(exchange), f).andThen {
-          case Task.Value(_) =>
-            Task.Value.Unit
-          case Task.Throw(cause) =>
-            System.err.println("Failure handling request")
-            cause.printStackTrace()
-            Task.Value.Unit
+        exchange.dispatch()
+        val t: Task[Unit] = Task.Sequence(Task.Value(exchange), f).sequence { result =>
+          exchange.endExchange()
+          result match {
+            case Task.Throw(cause) =>
+              System.err.println("Failure handling request")
+              cause.printStackTrace()
+            case _ => ()
+          }
+          Task.Value.Unit
         }
         new ImperativeInterpreter().run(t)
       }
