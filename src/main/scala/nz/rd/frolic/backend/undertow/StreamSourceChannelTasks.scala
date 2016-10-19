@@ -6,16 +6,8 @@ import nz.rd.frolic.async.Task
 import org.xnio.ChannelListener
 import org.xnio.channels.StreamSourceChannel
 
-object StreamSourceChannelTasks {
-  def apply(channel: => StreamSourceChannel): StreamSourceChannelTasks =
-    new StreamSourceChannelTasks(() => channel)
-}
-
-class StreamSourceChannelTasks private[StreamSourceChannelTasks] (getChannel: () => StreamSourceChannel) {
-  private var channel: StreamSourceChannel = null
-
+class StreamSourceChannelTasks(channel: StreamSourceChannel) {
   private def readTask[A](f: StreamSourceChannel => A, needsCallback: A => Boolean): Task[A] = {
-    if (channel == null) { channel = getChannel() }
     val result: A = f(channel)
     if (needsCallback(result)) {
       def scheduleCallback(resume: (Task.Value[A] => Unit)): Unit = {
@@ -48,9 +40,6 @@ class StreamSourceChannelTasks private[StreamSourceChannelTasks] (getChannel: ()
   def isOpen(): Boolean = channel.isOpen
 
   def waitForClose(): Task[Unit] = {
-    if (channel == null) {
-      channel = getChannel()
-    }
     if (channel.isOpen) {
       def scheduleCallback(resume: (Task.Value[Unit] => Unit)): Unit = {
         channel.getCloseSetter.set(new ChannelListener[StreamSourceChannel] {

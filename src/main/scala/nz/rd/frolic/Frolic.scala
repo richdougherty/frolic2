@@ -1,15 +1,11 @@
 package nz.rd.frolic
 
-import java.io.IOException
-
-import io.undertow.Undertow
-import io.undertow.io.{IoCallback, Sender}
-import io.undertow.server.{HttpHandler, HttpServerExchange}
-import nz.rd.frolic.async._
+import nz.rd.frolic.async.Task
+import nz.rd.frolic.backend.undertow.UndertowBackend
+import nz.rd.frolic.http.{Request, Response}
 
 object Frolic {
-
-
+  def start(f: Request => Task[Response]): Unit = UndertowBackend.startWrapped(f)
 }
 
 
