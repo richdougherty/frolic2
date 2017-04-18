@@ -31,6 +31,10 @@ trait Task[+A] {
 }
 
 object Task {
+
+  // FIXME: Think about whether this hack is worth it!
+  //implicit def unitConversion(t: Task[_]): Task[Unit] = t.asInstanceOf[Task[Unit]]
+
   sealed trait Result[+A] extends Task[A]
 
   case class Value[+A](value: A) extends Result[A]

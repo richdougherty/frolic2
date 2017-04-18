@@ -8,12 +8,14 @@ object Reader {
   case class Error[+B](cause: Throwable, f: Unit --> B) extends Reader[Nothing,B]
 }
 
+
+
 sealed trait Writer[+B]
 object Writer {
-  case class WriteElement[+B](element: B, f: Unit --> Writer[B]) extends Writer[B]
+  case class WriteElement[+B](element: B, f: _ --> Writer[B]) extends Writer[B]
   case class WriteChunk[+B](chunk: Seq[B], f: Int --> Writer[B]) extends Writer[B]
-  case class Close[+B](f: Unit --> B) extends Writer[B]
-  case class Error[+B](cause: Throwable, f: Unit --> B) extends Writer[B]
+  case class Close[+B](f: _ --> B) extends Writer[B]
+  case class Error[+B](cause: Throwable, f: _ --> B) extends Writer[B]
 }
 
 sealed trait Piper[-A,+B]
