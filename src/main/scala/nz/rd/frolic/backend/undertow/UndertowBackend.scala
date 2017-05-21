@@ -10,19 +10,34 @@ import nz.rd.frolic.http.{Request, Response}
 
 object UndertowBackend {
 
-  def flatIoTask[A](f: IoCallback => Task[A]): Task[A] = {
-    Task.Suspend { resume: (Task.Result[Unit] => Unit) =>
+  /**
+   * Creates a task that suspends the computation until an [[IoCallback]] is called.
+   * The `IoCallback` is be provided to the given block of code when the task
+   * is suspended. Calling the `IoCallback` will resume the suspended computation
+   * by calling its [[Continuation]].
+   *
+   * For example:
+   *
+   * ```
+   * ioSuspend { resume: IoCallback => sender.send("Hello world", resume) }
+   * ```
+   *
+   * Or more succinctly:
+   *
+   * ```
+   * ioSuspend(sender.send("Hello world", _))
+   * ```
+   */
+  def ioSuspend(block: IoCallback => Unit): Task.Suspend[Unit] = {
+    Task.Suspend { k: Continuation[Unit] =>
       val ioCallback = new IoCallback {
         override def onComplete(exchange: HttpServerExchange, sender: Sender): Unit =
-          resume(Task.Value.Unit)
+          k.resume(())
         override def onException(exchange: HttpServerExchange, sender: Sender, exception: IOException): Unit =
-          resume(Task.Throw(exception))
+          k.resumeWithException(exception)
       }
-      f(ioCallback)
+      block(ioCallback)
     }
-  }
-  def ioTask[A](f: IoCallback => A): Task[A] = {
-    flatIoTask { c: IoCallback => Task.Value(f(c)) }
   }
 
   def startWrapped(f: Request => Task[Response]): Unit = {
@@ -50,15 +65,15 @@ object UndertowBackend {
 
       override def handleRequest(exchange: HttpServerExchange): Unit = {
         exchange.dispatch()
-        val t: Task[Unit] = Task.Sequence(Task.Value(exchange), f).sequence { result =>
+        val t: Task[Unit] = Task.Sequence(Task.Success(exchange), f).sequence { result =>
           exchange.endExchange()
           result match {
-            case Task.Throw(cause) =>
+            case Task.Failure(cause) =>
               System.err.println("Failure handling request")
               cause.printStackTrace()
             case _ => ()
           }
-          Task.Value.Unit
+          Task.Success.Unit
         }
         new FunctionalInterpreter().run(t)
       }

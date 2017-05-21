@@ -2,7 +2,7 @@ package nz.rd.frolic.backend.undertow
 
 import java.nio.ByteBuffer
 
-import nz.rd.frolic.async.Task
+import nz.rd.frolic.async.{Continuation, Task}
 import org.xnio.ChannelListener
 import org.xnio.channels.StreamSourceChannel
 
@@ -10,22 +10,22 @@ class StreamSourceChannelTasks(channel: StreamSourceChannel) {
   private def readTask[A](f: StreamSourceChannel => A, needsCallback: A => Boolean): Task[A] = {
     val result: A = f(channel)
     if (needsCallback(result)) {
-      def scheduleCallback(resume: (Task.Value[A] => Unit)): Unit = {
+      def scheduleCallback(k: Continuation[A]): Unit = {
         channel.getReadSetter.set(new ChannelListener[StreamSourceChannel] {
           override def handleEvent(channel: StreamSourceChannel): Unit = {
             channel.suspendReads() // PERF: Can we avoid suspending reads?
             val result: A = f(channel)
             if (needsCallback(result)) {
-              scheduleCallback(resume)
+              scheduleCallback(k)
             } else {
-              resume(Task.Value(result))
+              k.resume(result)
             }
           }
         })
       }
-      Task.Suspend { resume: (Task.Value[A] => Unit) => scheduleCallback(resume) }
+      Task.Suspend { k: Continuation[A] => scheduleCallback(k) }
     } else {
-      Task.Value(result)
+      Task.Success(result)
     }
   }
 
@@ -41,20 +41,20 @@ class StreamSourceChannelTasks(channel: StreamSourceChannel) {
 
   def waitForClose(): Task[Unit] = {
     if (channel.isOpen) {
-      def scheduleCallback(resume: (Task.Value[Unit] => Unit)): Unit = {
+      def scheduleCallback(k: Continuation[Unit]): Unit = {
         channel.getCloseSetter.set(new ChannelListener[StreamSourceChannel] {
           override def handleEvent(channel: StreamSourceChannel): Unit = {
             if (channel.isOpen) {
-              scheduleCallback(resume)
+              scheduleCallback(k)
             } else {
-              resume(Task.Value.Unit)
+              k.resume(())
             }
           }
         })
       }
-      Task.Suspend { resume: (Task.Value[Unit] => Unit) => scheduleCallback(resume) }
+      Task.Suspend { k: Continuation[Unit] => scheduleCallback(k) }
     } else {
-      Task.Value.Unit
+      Task.Success.Unit
     }
   }
 }

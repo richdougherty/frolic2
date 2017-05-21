@@ -6,87 +6,51 @@ import io.undertow.io.Sender
 import nz.rd.frolic.async._
 
 import scala.annotation.tailrec
+import scala.collection.mutable.ArrayBuffer
 
 class SenderTasks(sender: Sender) {
-//  def send(buffer: ByteBuffer): Task[Unit] = sendTask(sender.send(buffer, _))
-//  def send(buffer: Array[ByteBuffer], callback: IoCallback)
-  def send(data: String): Task[Unit] = UndertowBackend.ioTask(sender.send(data, _))
-  def writeToSender(stream: Stream2[Byte]): Task[Unit] = {
 
-    var _buf: ByteBuffer = null
+  def send(data: String): Task[Unit] = UndertowBackend.ioSuspend(sender.send(data, _))
+  def send(buffer: ByteBuffer): Task[Unit] = UndertowBackend.ioSuspend(sender.send(buffer, _))
+  def send(buffers: Array[ByteBuffer]): Task[Unit] = UndertowBackend.ioSuspend(sender.send(buffers, _))
 
-    def lazyBuffer(): ByteBuffer = {
-      if (_buf == null) {
-        _buf = ByteBuffer.allocate(8 * 1024)
-      }
-      _buf
+  def send(stream: Stream2[Byte]): Task[Unit] = {
+
+    // TODO: Improve perf - lazy buffer allocation, alloc fewer buffers, send if total buffer size is too big, etc
+    val buffers = ArrayBuffer[ByteBuffer]()
+
+    def sendBuffers(): Task[Unit] = {
+      if (buffers.isEmpty) Task.Success.Unit else send(buffers.toArray)
     }
 
-    def haveDataInBuffer: Boolean = _buf != null && _buf.capacity > 0
-
-    def bufferFull: Boolean = _buf != null && _buf.remaining == 0
-
-    def nonRecSendData(read: Read[Byte]): Task[Unit] = sendData(read)
-
     @tailrec
-    def sendData(read: Read[Byte]): Task[Unit] = read match {
+    def sendRead(read: Read[Byte]): Task[Unit] = read match {
       case Read.Done =>
-        if (haveDataInBuffer) {
-          UndertowBackend.ioTask(sender.send(lazyBuffer(), _))
-        } else Task.Value.Unit
+        sendBuffers()
       case Read.Error(cause) =>
-        UndertowBackend.ioTask(sender.close(_)).flatMap(_ => Task.Throw(cause))
-      case computed: Read.Computed[Byte] =>
-        val sendComputed: Task[Unit] = computed.next().flatMap(nonRecSendData)
-        if (haveDataInBuffer) {
-          UndertowBackend.ioTask(sender.send(lazyBuffer(), _)).flatMap(_ => sendComputed)
-        } else {
-          sendComputed
-        }
+        sendBuffers().andThen(Task.Failure(cause))
       case available: Read.Available[Byte] =>
         available.piece match {
           case Stream2.Element(e) =>
-            assert(_buf.remaining > 0) // Should be true since buffer should have been sent if already full
-            lazyBuffer().put(e)
-            if (bufferFull) {
-              UndertowBackend.ioTask(sender.send(lazyBuffer(), _)).map(_ => nonRecSendData(available.next))
-            } else sendData(available.next)
-          case b: Stream2.Block.Buffer[Byte] =>
-            val blockBuf: ByteBuffer = b.buffer
-            if (haveDataInBuffer) {
-              // Send both buffers together
-              UndertowBackend.ioTask(sender.send(Array(_buf, blockBuf), _)).map(_ => nonRecSendData(available.next))
-            } else {
-              // Just send the block buffer
-              UndertowBackend.ioTask(sender.send(blockBuf, _)).map(_ => nonRecSendData(available.next))
-            }
+            val buf = ByteBuffer.allocate(1)
+            buf.put(e)
+            buffers += buf
+          case b: Stream2.Block.ByteBuffer =>
+            buffers += b.buffer
           case b: Stream2.Block[Byte] =>
-            val itr: Iterator[Byte] = b.toSeq.iterator
-            val buf: ByteBuffer = lazyBuffer()
-
-            def bufferAndSendBytes(): Task[Unit] = {
-              @tailrec
-              def bufferAndSendBytesInner(): Task[Unit] = {
-                if (itr.hasNext) {
-                  val b = itr.next()
-                  buf.put(b)
-                  if (bufferFull) {
-                    UndertowBackend.ioTask(sender.send(buf, _)).map(_ => bufferAndSendBytes())
-                  } else bufferAndSendBytesInner() // Copy more bytes
-                } else nonRecSendData(available.next)
-              }
-
-              bufferAndSendBytesInner()
-            }
-
-            bufferAndSendBytes()
+            buffers += ByteBuffer.wrap(b.toSeq.toArray)
         }
+        sendRead(available.next)
+      case computed: Read.Computed[Byte] =>
+        sendBuffers().andThen(computed.next().flatMap(nonRecSendRead))
     }
 
-    sendData(Read.stream(stream))
+    def nonRecSendRead(read: Read[Byte]): Task[Unit] = sendRead(read)
+
+    sendRead(Read.stream(stream))
   }
 
-  def close(): Task[Unit] = UndertowBackend.ioTask(sender.close(_))
+  def close(): Task[Unit] = UndertowBackend.ioSuspend(sender.close(_))
 
   def asyncSendAndEnd(data: String): Unit = sender.send(data)
   def asyncClose(): Unit = sender.close()
