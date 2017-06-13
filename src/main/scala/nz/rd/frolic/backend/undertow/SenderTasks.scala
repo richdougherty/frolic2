@@ -28,7 +28,7 @@ class SenderTasks(sender: Sender) {
       case Read.Done =>
         sendBuffers()
       case Read.Error(cause) =>
-        sendBuffers().andThen(Task.Failure(cause))
+        sendBuffers().finallyTask(Task.Failure(cause))
       case available: Read.Available[Byte] =>
         available.piece match {
           case Stream2.Element(e) =>
@@ -42,7 +42,7 @@ class SenderTasks(sender: Sender) {
         }
         sendRead(available.next)
       case computed: Read.Computed[Byte] =>
-        sendBuffers().andThen(computed.next().flatMap(nonRecSendRead))
+        sendBuffers().flatThen(computed.next().flatMap(nonRecSendRead))
     }
 
     def nonRecSendRead(read: Read[Byte]): Task[Unit] = sendRead(read)

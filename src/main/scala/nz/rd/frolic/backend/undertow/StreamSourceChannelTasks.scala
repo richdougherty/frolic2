@@ -7,15 +7,19 @@ import org.xnio.ChannelListener
 import org.xnio.channels.StreamSourceChannel
 
 class StreamSourceChannelTasks(channel: StreamSourceChannel) {
-  private def readTask[A](f: StreamSourceChannel => A, needsCallback: A => Boolean): Task[A] = {
-    val result: A = f(channel)
-    if (needsCallback(result)) {
+  private def readTask[A](readFromChannel: StreamSourceChannel => A, readAgainLater: A => Boolean): Task[A] = {
+    val result: A = readFromChannel(channel)
+
+    if (readAgainLater(result)) {
+
       def scheduleCallback(k: Continuation[A]): Unit = {
         channel.getReadSetter.set(new ChannelListener[StreamSourceChannel] {
           override def handleEvent(channel: StreamSourceChannel): Unit = {
-            channel.suspendReads() // PERF: Can we avoid suspending reads?
-            val result: A = f(channel)
-            if (needsCallback(result)) {
+            // PERF: Can we avoid suspending reads?
+            // FIXME: Check that we can't get multiple reads - maybe use a counter to ensure this is only called once
+            channel.suspendReads()
+            val result: A = readFromChannel(channel)
+            if (readAgainLater(result)) {
               scheduleCallback(k)
             } else {
               k.resume(result)
@@ -23,7 +27,9 @@ class StreamSourceChannelTasks(channel: StreamSourceChannel) {
           }
         })
       }
+
       Task.Suspend { k: Continuation[A] => scheduleCallback(k) }
+
     } else {
       Task.Success(result)
     }

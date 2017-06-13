@@ -8,6 +8,8 @@ import io.undertow.server.{HttpHandler, HttpServerExchange}
 import nz.rd.frolic.async.{FunctionalInterpreter, Task, _}
 import nz.rd.frolic.http.{Request, Response}
 
+import scala.util.control.NonFatal
+
 object UndertowBackend {
 
   /**
@@ -65,15 +67,12 @@ object UndertowBackend {
 
       override def handleRequest(exchange: HttpServerExchange): Unit = {
         exchange.dispatch()
-        val t: Task[Unit] = Task.Sequence(Task.Success(exchange), f).sequence { result =>
+        val t: Task[Unit] = Task.Success(exchange).flatMap(f).`catch` {
+          case NonFatal(t) =>
+            System.err.println("Failure handling request")
+            t.printStackTrace()
+        }.`finally` {
           exchange.endExchange()
-          result match {
-            case Task.Failure(cause) =>
-              System.err.println("Failure handling request")
-              cause.printStackTrace()
-            case _ => ()
-          }
-          Task.Success.Unit
         }
         new FunctionalInterpreter().run(t)
       }

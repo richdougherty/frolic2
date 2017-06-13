@@ -11,7 +11,7 @@ class TaskSpec extends FreeSpec with Matchers with ScalaFutures {
   "Task" - {
     def runToFuture[A](t: Task[A]): Future[A] = {
       val (newTask, future) = Task.toFutureTask(t)
-      new FunctionalInterpreter().run(newTask)
+      FunctionalInterpreter.run(newTask)
       future
     }
     "Return should yield value" in {
@@ -24,7 +24,7 @@ class TaskSpec extends FreeSpec with Matchers with ScalaFutures {
       runToFuture(t).eitherValue should be (Some(Left(e)))
     }
     "Do should run thunk" in {
-      val t = Task.FlatEval(Task.Success(9))
+      val t = Task.Flatten(Task.Eval(Task.Success(9)))
       runToFuture(t).eitherValue should be (Some(Right(9)))
     }
     "Task.map should modify value" in {
@@ -37,7 +37,7 @@ class TaskSpec extends FreeSpec with Matchers with ScalaFutures {
     }
     "Task.andThen should run success in succession" in {
       val buffer = ArrayBuffer[Int]()
-      val t = Task.Eval(buffer += 1).andThen(Task.Eval {
+      val t = Task.Eval(buffer += 1).`thenTask`(Task.Eval {
         buffer += 2
         3
       })
