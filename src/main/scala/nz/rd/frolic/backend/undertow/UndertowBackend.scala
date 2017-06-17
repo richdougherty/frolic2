@@ -5,6 +5,7 @@ import java.io.IOException
 import io.undertow.Undertow
 import io.undertow.io.{IoCallback, Sender}
 import io.undertow.server.{HttpHandler, HttpServerExchange}
+import io.undertow.util.SameThreadExecutor
 import nz.rd.frolic.async.{FunctionalInterpreter, Task, _}
 import nz.rd.frolic.http.{Request, Response}
 
@@ -30,15 +31,15 @@ object UndertowBackend {
    * ioSuspend(sender.send("Hello world", _))
    * ```
    */
-  def ioSuspend(block: IoCallback => Unit): Task.Suspend[Unit] = {
+  def ioSuspend(undertowIo: IoCallback => Unit): Task.Suspend[Unit] = {
+    println("Suspending until Undertow calls back")
     Task.Suspend { k: Continuation[Unit] =>
-      val ioCallback = new IoCallback {
+      undertowIo(new IoCallback {
         override def onComplete(exchange: HttpServerExchange, sender: Sender): Unit =
           k.resume(())
         override def onException(exchange: HttpServerExchange, sender: Sender, exception: IOException): Unit =
           k.resumeWithException(exception)
-      }
-      block(ioCallback)
+      })
     }
   }
 
@@ -49,15 +50,51 @@ object UndertowBackend {
         override def method: String = exchange.getRequestMethod.toString
         override def uri: String = exchange.getRequestURI
         override def path: String = exchange.getRequestPath
-        override lazy val entityChannel: StreamSourceChannelTasks =
-          new StreamSourceChannelTasks(exchange.getRequestChannel())
+        override lazy val entity: Stream2[Byte] = {
+          new StreamSourceChannelTasks(exchange.getRequestChannel()).stream()
+        }
       }
-      val t: Task[Unit] = f(request).flatMap { response: Response =>
-        exchange.setResponseCode(response.statusCode)
-        val sender: Sender = exchange.getResponseSender()
-        response.send(new SenderTasks(sender))
+      f(request).flatMap { response: Response =>
+        Task.Flatten(Task.Eval {
+
+          def sendRead(r: Read[Byte]): Task[Unit] = {
+            val sender: Sender = exchange.getResponseSender()
+            new SenderTasks(sender).send(r)
+          }
+
+          val bodyStream: Stream2[Byte] = response.body
+          val bodyRead: Read[Byte] = Read.fromStream(bodyStream)
+          bodyRead match {
+            case Read.Done =>
+              println("Undertow backend: response body is Done")
+              exchange.setStatusCode(response.statusCode)
+              exchange.endExchange()
+              Task.Success.Unit
+            case Read.Error(t) =>
+              println("Undertow backend: response body is Error")
+              exchange.setStatusCode(500)
+              t.printStackTrace()
+              Task.Failure(t)
+            case available: Read.Available[Byte] =>
+              println(s"Undertow backend: response body has available data: ${available.piece}")
+              sendRead(available)
+            case computed: Read.Computed[Byte] =>
+              // "Dispatch" to same thread to avoid exchange being ended automatically. Staying on the same thread
+              // makes it possible to do some processing without paying the price of a thread context switch. It is the
+              // responsibility of the caller to avoid blocking the IO thread by switching to another thread if
+              // necessary.
+              println(s"Undertow backend: response body needs computing")
+              Task.Suspend[Unit] { resume: Continuation[Unit] =>
+                exchange.dispatch(SameThreadExecutor.INSTANCE, new Runnable() {
+                  override def run(): Unit = resume.resume(())
+                })
+              }.thenTask(Task.Flatten(Task.Eval { sendRead(computed) }))
+            case otherRead =>
+              val sender: Sender = exchange.getResponseSender()
+              new SenderTasks(sender).send(otherRead)
+          }
+        }).finallyTask(response.onDone)
       }
-      t
     }
   }
 
@@ -67,7 +104,7 @@ object UndertowBackend {
 
       override def handleRequest(exchange: HttpServerExchange): Unit = {
         exchange.dispatch()
-        val t: Task[Unit] = Task.Success(exchange).flatMap(f).`catch` {
+        val t: Task[Any] = Task.Success(exchange).flatMap[Any](f).`catch` {
           case NonFatal(t) =>
             System.err.println("Failure handling request")
             t.printStackTrace()

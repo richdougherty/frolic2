@@ -8,46 +8,52 @@ import nz.rd.frolic.async._
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 
-class SenderTasks(sender: Sender) {
+final class SenderTasks(sender: Sender) {
 
   def send(data: String): Task[Unit] = UndertowBackend.ioSuspend(sender.send(data, _))
   def send(buffer: ByteBuffer): Task[Unit] = UndertowBackend.ioSuspend(sender.send(buffer, _))
   def send(buffers: Array[ByteBuffer]): Task[Unit] = UndertowBackend.ioSuspend(sender.send(buffers, _))
 
-  def send(stream: Stream2[Byte]): Task[Unit] = {
+  def send(stream: Stream2[Byte]): Task[Unit] = send(Read.fromStream(stream))
+  def send(read: Read[Byte]): Task[Unit] = {
 
     // TODO: Improve perf - lazy buffer allocation, alloc fewer buffers, send if total buffer size is too big, etc
     val buffers = ArrayBuffer[ByteBuffer]()
 
     def sendBuffers(): Task[Unit] = {
+      println("Sending any buffers")
       if (buffers.isEmpty) Task.Success.Unit else send(buffers.toArray)
     }
 
     @tailrec
     def sendRead(read: Read[Byte]): Task[Unit] = read match {
       case Read.Done =>
+        println("Read is Done")
         sendBuffers()
       case Read.Error(cause) =>
-        sendBuffers().finallyTask(Task.Failure(cause))
+        println("Read is Error")
+        sendBuffers().thenTask(Task.Failure(cause))
       case available: Read.Available[Byte] =>
+        println(s"Read is Available ($available)")
         available.piece match {
           case Stream2.Element(e) =>
             val buf = ByteBuffer.allocate(1)
             buf.put(e)
             buffers += buf
-          case b: Stream2.Block.ByteBuffer =>
-            buffers += b.buffer
+          case b: Stream2.Block.ByteBlock =>
+            buffers += b.readOnlyBuffer
           case b: Stream2.Block[Byte] =>
             buffers += ByteBuffer.wrap(b.toSeq.toArray)
         }
         sendRead(available.next)
       case computed: Read.Computed[Byte] =>
+        println(s"Read needs Computing")
         sendBuffers().flatThen(computed.next().flatMap(nonRecSendRead))
     }
 
     def nonRecSendRead(read: Read[Byte]): Task[Unit] = sendRead(read)
 
-    sendRead(Read.stream(stream))
+    sendRead(read)
   }
 
   def close(): Task[Unit] = UndertowBackend.ioSuspend(sender.close(_))

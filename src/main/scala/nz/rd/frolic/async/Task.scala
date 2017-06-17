@@ -43,9 +43,6 @@ trait Task[+A] {
 
 final object Task {
 
-  // FIXME: Think about whether this hack is worth it!
-  //implicit def unitConversion(t: Task[_]): Task[Unit] = t.asInstanceOf[Task[Unit]]
-
   sealed trait Completion[+A] extends Task[A]
 
   case class Success[+A](value: A) extends Completion[A]
