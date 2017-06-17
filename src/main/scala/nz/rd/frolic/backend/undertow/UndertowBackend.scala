@@ -6,7 +6,8 @@ import io.undertow.Undertow
 import io.undertow.io.{IoCallback, Sender}
 import io.undertow.server.{HttpHandler, HttpServerExchange}
 import io.undertow.util.SameThreadExecutor
-import nz.rd.frolic.async.{FunctionalInterpreter, Task, _}
+import nz.rd.frolic.async.trickle.{Read, Trickle}
+import nz.rd.frolic.async.{FunctionalInterpreter, Task, trickle, _}
 import nz.rd.frolic.http.{Request, Response}
 
 import scala.util.control.NonFatal
@@ -50,7 +51,7 @@ object UndertowBackend {
         override def method: String = exchange.getRequestMethod.toString
         override def uri: String = exchange.getRequestURI
         override def path: String = exchange.getRequestPath
-        override lazy val entity: Stream2[Byte] = {
+        override lazy val entity: Trickle[Byte] = {
           new StreamSourceChannelTasks(exchange.getRequestChannel()).stream()
         }
       }
@@ -62,7 +63,7 @@ object UndertowBackend {
             new SenderTasks(sender).send(r)
           }
 
-          val bodyStream: Stream2[Byte] = response.body
+          val bodyStream: Trickle[Byte] = response.body
           val bodyRead: Read[Byte] = Read.fromStream(bodyStream)
           bodyRead match {
             case Read.Done =>

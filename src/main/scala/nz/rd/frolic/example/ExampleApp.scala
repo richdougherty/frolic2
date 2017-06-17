@@ -3,23 +3,25 @@ package nz.rd.frolic.example
 import java.nio.ByteBuffer
 
 import nz.rd.frolic.Frolic
-import nz.rd.frolic.async.{Read, Stream2, Task}
+import nz.rd.frolic.async.Task
+import nz.rd.frolic.async.trickle.{ByteBlock, Read, SeqBlock, Trickle}
 import nz.rd.frolic.http.{Request, Response}
 
 import scala.annotation.tailrec
 
 object ExampleApp {
   def main(args: Array[String]): Unit = {
+
     Frolic.start { request: Request =>
       if (request.path == "/plaintext") {
         val response = new Response {
           override val statusCode: Int = 200
-          override val body: Stream2[Byte] = Stream2.Block.ByteBlock(ByteBuffer.wrap("Hello world".getBytes("utf-8")))
+          override val body: Trickle[Byte] = ByteBlock(ByteBuffer.wrap("Hello world".getBytes("utf-8")))
         }
         Task.Success(response)
       } else {
 
-        def readStreamSize(stream: Stream2[Byte]): Task[Int] = {
+        def readStreamSize(stream: Trickle[Byte]): Task[Int] = {
           println("Starting reading stream size")
           @tailrec
           def readLoop(acc: Int, read: Read[Byte]): Task[Int] = read match {
@@ -39,19 +41,19 @@ object ExampleApp {
         readStreamSize(request.entity).map { streamSize: Int =>
           new Response {
             override val statusCode: Int = 200
-            override val body: Stream2[Byte] = {
+            override val body: Trickle[Byte] = {
 
-              def countdown(n: Int): Stream2[Byte] = {
-                if (n < 0) Stream2.Empty else {
-                  Stream2.Computed(Task.Eval(Stream2.Concat(Stream2.Block.SeqBlock(s"$n\n".getBytes("utf-8").toVector), countdown(n - 1))))
+              def countdown(n: Int): Trickle[Byte] = {
+                if (n < 0) Trickle.Empty else {
+                  Trickle.Computed(Task.Eval(Trickle.Concat(SeqBlock(s"$n\n".getBytes("utf-8").toVector), countdown(n - 1))))
                 }
               }
 
-              Stream2.Block.ByteBlock(s"Hello from thread: ${Thread.currentThread.getName}.\n") ++
-                  Stream2.Block.ByteBlock(s"Read $streamSize bytes from request channel.\n") ++
-                  Stream2.Block.ByteBlock(s"Hello from thread: ${Thread.currentThread.getName}.\n") ++
+              ByteBlock(s"Hello from thread: ${Thread.currentThread.getName}.\n") ++
+                  ByteBlock(s"Read $streamSize bytes from request channel.\n") ++
+                  ByteBlock(s"Hello from thread: ${Thread.currentThread.getName}.\n") ++
                   countdown(10) ++
-                  Stream2.Block.ByteBlock(s"Hello again from thread: ${Thread.currentThread.getName}.\n")
+                  ByteBlock(s"Hello again from thread: ${Thread.currentThread.getName}.\n")
             }
           }
         }

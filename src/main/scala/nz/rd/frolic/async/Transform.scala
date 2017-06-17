@@ -1,6 +1,7 @@
 package nz.rd.frolic.async
 
 sealed trait Transform[-A,+B]
+
 object Transform {
 
   implicit def function[A,B](f: Task.Completion[A] => Task[B]) = Function(f)
@@ -13,4 +14,3 @@ object Transform {
   case class Fixed[+B](t: Task[B]) extends Transform[Any,B]
 
 }
-

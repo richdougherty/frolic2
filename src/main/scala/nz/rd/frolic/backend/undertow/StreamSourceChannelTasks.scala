@@ -2,7 +2,8 @@ package nz.rd.frolic.backend.undertow
 
 import java.nio.ByteBuffer
 
-import nz.rd.frolic.async.{Continuation, Stream2, Task}
+import nz.rd.frolic.async.trickle.{ByteBlock, Trickle}
+import nz.rd.frolic.async.{Continuation, Task}
 import org.xnio.ChannelListener
 import org.xnio.channels.StreamSourceChannel
 
@@ -42,15 +43,15 @@ class StreamSourceChannelTasks(channel: StreamSourceChannel) {
   def read(dsts: Array[ByteBuffer], offset: Int, length: Int): Task[Long] =
     readTask(_.read(dsts, offset, length), (_: Long) == 0L)
 
-  def stream(): Stream2[Byte] = {
-    Stream2.Computed(Task.Flatten(Task.Eval {
+  def stream(): Trickle[Byte] = {
+    Trickle.Computed(Task.Flatten(Task.Eval {
       val buf = ByteBuffer.allocate(256)
       read(buf).map { bytesRead: Int =>
         if (bytesRead == -1) {
-          Stream2.Empty: Stream2[Byte] // The stream is done/empty
+          Trickle.Empty: Trickle[Byte] // The stream is done/empty
         } else {
           assert(bytesRead != 0) // Our read methods retry if there no bytes to read, so this shouldn't happen
-          Stream2.Concat[Byte](Stream2.Block.ByteBlock(buf), stream())
+          Trickle.Concat[Byte](ByteBlock(buf), stream())
         }
       }
     }))

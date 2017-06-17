@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 
 import io.undertow.io.Sender
 import nz.rd.frolic.async._
+import nz.rd.frolic.async.trickle.{ByteBlock, Read, Trickle}
 
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
@@ -14,7 +15,7 @@ final class SenderTasks(sender: Sender) {
   def send(buffer: ByteBuffer): Task[Unit] = UndertowBackend.ioSuspend(sender.send(buffer, _))
   def send(buffers: Array[ByteBuffer]): Task[Unit] = UndertowBackend.ioSuspend(sender.send(buffers, _))
 
-  def send(stream: Stream2[Byte]): Task[Unit] = send(Read.fromStream(stream))
+  def send(stream: Trickle[Byte]): Task[Unit] = send(Read.fromStream(stream))
   def send(read: Read[Byte]): Task[Unit] = {
 
     // TODO: Improve perf - lazy buffer allocation, alloc fewer buffers, send if total buffer size is too big, etc
@@ -36,13 +37,13 @@ final class SenderTasks(sender: Sender) {
       case available: Read.Available[Byte] =>
         println(s"Read is Available ($available)")
         available.piece match {
-          case Stream2.Element(e) =>
+          case trickle.Trickle.Element(e) =>
             val buf = ByteBuffer.allocate(1)
             buf.put(e)
             buffers += buf
-          case b: Stream2.Block.ByteBlock =>
+          case b: ByteBlock =>
             buffers += b.readOnlyBuffer
-          case b: Stream2.Block[Byte] =>
+          case b: trickle.Trickle.Block[Byte] =>
             buffers += ByteBuffer.wrap(b.toSeq.toArray)
         }
         sendRead(available.next)
