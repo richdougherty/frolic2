@@ -14,22 +14,20 @@ class StreamSourceChannelTasks(channel: StreamSourceChannel) {
     if (readAgainLater(result)) {
 
       def scheduleCallback(k: Continuation[A]): Unit = {
-        channel.getReadSetter.set(new ChannelListener[StreamSourceChannel] {
-          override def handleEvent(channel: StreamSourceChannel): Unit = {
-            // PERF: Can we avoid suspending reads?
-            // FIXME: Check that we can't get multiple reads - maybe use a counter to ensure this is only called once
-            channel.suspendReads()
-            val result: A = readFromChannel(channel)
-            if (readAgainLater(result)) {
-              scheduleCallback(k)
-            } else {
-              k.resume(result)
-            }
+        channel.getReadSetter.set((channel: StreamSourceChannel) => {
+          // PERF: Can we avoid suspending reads?
+          // FIXME: Check that we can't get multiple reads - maybe use a counter to ensure this is only called once
+          channel.suspendReads()
+          val result: A = readFromChannel(channel)
+          if (readAgainLater(result)) {
+            scheduleCallback(k)
+          } else {
+            k.resume(result)
           }
         })
       }
 
-      Task.Suspend { k: Continuation[A] => scheduleCallback(k) }
+      Task.suspend { k: Continuation[A] => scheduleCallback(k) }
 
     } else {
       Task.Success(result)
@@ -44,7 +42,7 @@ class StreamSourceChannelTasks(channel: StreamSourceChannel) {
     readTask(_.read(dsts, offset, length), (_: Long) == 0L)
 
   def stream(): Trickle[Byte] = {
-    Trickle.Computed(Task.Flatten(Task.Eval {
+    Trickle.Computed(Task.flatEval {
       val buf = ByteBuffer.allocate(256)
       read(buf).map { bytesRead: Int =>
         if (bytesRead == -1) {
@@ -54,7 +52,7 @@ class StreamSourceChannelTasks(channel: StreamSourceChannel) {
           Trickle.Concat[Byte](ByteBlock(buf), stream())
         }
       }
-    }))
+    })
   }
 
   def close(): Unit = channel.close()
@@ -63,19 +61,17 @@ class StreamSourceChannelTasks(channel: StreamSourceChannel) {
   def waitForClose(): Task[Unit] = {
     if (channel.isOpen) {
       def scheduleCallback(k: Continuation[Unit]): Unit = {
-        channel.getCloseSetter.set(new ChannelListener[StreamSourceChannel] {
-          override def handleEvent(channel: StreamSourceChannel): Unit = {
-            if (channel.isOpen) {
-              scheduleCallback(k)
-            } else {
-              k.resume(())
-            }
+        channel.getCloseSetter.set((channel: StreamSourceChannel) => {
+          if (channel.isOpen) {
+            scheduleCallback(k)
+          } else {
+            k.resume(())
           }
         })
       }
-      Task.Suspend { k: Continuation[Unit] => scheduleCallback(k) }
+      Task.suspend { k: Continuation[Unit] => scheduleCallback(k) }
     } else {
-      Task.Success.Unit
+      Task.Unit
     }
   }
 }

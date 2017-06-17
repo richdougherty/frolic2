@@ -1,5 +1,6 @@
 package nz.rd.frolic.async
 
+import nz.rd.frolic.async.integration.scala.concurrent.ScalaConcurrentTasks
 import org.scalatest._
 import org.scalatest.concurrent.ScalaFutures
 
@@ -10,9 +11,7 @@ class TaskSpec extends FreeSpec with Matchers with ScalaFutures {
 
   "Task" - {
     def runToFuture[A](t: Task[A]): Future[A] = {
-      val (newTask, future) = Task.toFutureTask(t)
-      FunctionalInterpreter.run(newTask)
-      future
+      ScalaConcurrentTasks.interpretFuture(t, FunctionalInterpreter)
     }
     "Return should yield value" in {
       val t = Task.Success(1)
@@ -24,7 +23,7 @@ class TaskSpec extends FreeSpec with Matchers with ScalaFutures {
       runToFuture(t).eitherValue should be (Some(Left(e)))
     }
     "Do should run thunk" in {
-      val t = Task.Flatten(Task.Eval(Task.Success(9)))
+      val t = Task.flatEval(Task.Success(9))
       runToFuture(t).eitherValue should be (Some(Right(9)))
     }
     "Task.map should modify value" in {
@@ -37,10 +36,10 @@ class TaskSpec extends FreeSpec with Matchers with ScalaFutures {
     }
     "Task.andThen should run success in succession" in {
       val buffer = ArrayBuffer[Int]()
-      val t = Task.Eval(buffer += 1).`thenTask`(Task.Eval {
+      val t = Task.eval(buffer += 1).`then` {
         buffer += 2
         3
-      })
+      }
       runToFuture(t).eitherValue should be (Some(Right(3)))
       buffer.toList should be (List(1, 2))
     }

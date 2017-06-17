@@ -23,7 +23,7 @@ final class SenderTasks(sender: Sender) {
 
     def sendBuffers(): Task[Unit] = {
       println("Sending any buffers")
-      if (buffers.isEmpty) Task.Success.Unit else send(buffers.toArray)
+      if (buffers.isEmpty) Task.Unit else send(buffers.toArray)
     }
 
     @tailrec

@@ -34,7 +34,7 @@ object UndertowBackend {
    */
   def ioSuspend(undertowIo: IoCallback => Unit): Task.Suspend[Unit] = {
     println("Suspending until Undertow calls back")
-    Task.Suspend { k: Continuation[Unit] =>
+    Task.suspend { k: Continuation[Unit] =>
       undertowIo(new IoCallback {
         override def onComplete(exchange: HttpServerExchange, sender: Sender): Unit =
           k.resume(())
@@ -56,8 +56,8 @@ object UndertowBackend {
         }
       }
       f(request).flatMap { response: Response =>
-        Task.Flatten(Task.Eval {
 
+        Task.flatEval {
           def sendRead(r: Read[Byte]): Task[Unit] = {
             val sender: Sender = exchange.getResponseSender()
             new SenderTasks(sender).send(r)
@@ -69,8 +69,7 @@ object UndertowBackend {
             case Read.Done =>
               println("Undertow backend: response body is Done")
               exchange.setStatusCode(response.statusCode)
-              exchange.endExchange()
-              Task.Success.Unit
+              Task.Unit
             case Read.Error(t) =>
               println("Undertow backend: response body is Error")
               exchange.setStatusCode(500)
@@ -85,16 +84,17 @@ object UndertowBackend {
               // responsibility of the caller to avoid blocking the IO thread by switching to another thread if
               // necessary.
               println(s"Undertow backend: response body needs computing")
-              Task.Suspend[Unit] { resume: Continuation[Unit] =>
+              Task.suspend { resume: Continuation[Unit] =>
                 exchange.dispatch(SameThreadExecutor.INSTANCE, new Runnable() {
                   override def run(): Unit = resume.resume(())
                 })
-              }.thenTask(Task.Flatten(Task.Eval { sendRead(computed) }))
+              }.flatThen { sendRead(computed) }
             case otherRead =>
               val sender: Sender = exchange.getResponseSender()
               new SenderTasks(sender).send(otherRead)
           }
-        }).finallyTask(response.onDone)
+        }.finallyTask(response.onDone)
+
       }
     }
   }
@@ -104,8 +104,7 @@ object UndertowBackend {
     def httpHandler = new HttpHandler {
 
       override def handleRequest(exchange: HttpServerExchange): Unit = {
-        exchange.dispatch()
-        val t: Task[Any] = Task.Success(exchange).flatMap[Any](f).`catch` {
+        val t: Task[Unit] = Task.Success(exchange).flatMap(f).`catch` {
           case NonFatal(t) =>
             System.err.println("Failure handling request")
             t.printStackTrace()

@@ -44,18 +44,27 @@ class FunctionalInterpreter extends Interpreter {
       case compose: Task.Compose[_, _] =>
         // Convert the Compose into a normal form with only one level of Compose and with Transforms joined by Cons
         log("Can't step nested Compose, moving nested task to head position, consing nested transform, then stepping again")
-        Some(Task.Compose(compose.a, Transform.Cons(compose.b, transform)))
+        Some(Task.Compose(compose.task, Transform.Cons(compose.transform, transform)))
 
       case eval: Task.Eval[_] =>
         // Evaluate the function
         log("Running Eval")
-        Some(Task.Compose(try Task.Success(eval.apply()) catch {
-          case NonFatal(t) => Task.Failure(t)
-        }, transform))
+        val nextTask = eval.completion match {
+          case None =>
+            println("Eval not complete: evaluating now")
+            try Task.Success(eval.apply()) catch {
+              case NonFatal(t) => Task.Failure(t)
+            }
+          case Some(completion) =>
+            println(s"Eval is already complete: $completion")
+            completion
+        }
+        Some(Task.Compose(nextTask, transform))
+
 
       case flatten: Task.Flatten[_] =>
         log("Converting Flatten to equivalent Compose/Transform")
-        Some(Task.Compose(flatten.t.compose(Transform.function {
+        Some(Task.Compose(flatten.task.compose(Transform.function {
           case Task.Success(v) => v
           case f@Task.Failure(_) => f
         }), transform))

@@ -45,7 +45,7 @@ object ExampleApp {
 
               def countdown(n: Int): Trickle[Byte] = {
                 if (n < 0) Trickle.Empty else {
-                  Trickle.Computed(Task.Eval(Trickle.Concat(SeqBlock(s"$n\n".getBytes("utf-8").toVector), countdown(n - 1))))
+                  (Trickle.compute { SeqBlock(s"$n\n".getBytes("utf-8").toVector) }) ++ countdown(n - 1)
                 }
               }
 

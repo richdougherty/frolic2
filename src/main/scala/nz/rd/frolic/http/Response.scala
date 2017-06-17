@@ -6,5 +6,5 @@ import nz.rd.frolic.async.trickle.Trickle
 trait Response extends HttpMessage {
   def statusCode: Int
   def body: Trickle[Byte]
-  def onDone: Task[Unit] = Task.Success.Unit
+  def onDone: Task[Unit] = Task.Unit
 }

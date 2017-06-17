@@ -20,12 +20,12 @@ trait Task[+A] {
 
   // Higher level constructs
 
-  def `then`[B](block: => B): Task[B] = thenTask(Eval(block))
-  def flatThen[B](block: => Task[B]): Task[B] = thenTask(Flatten(Eval(block)))
+  def `then`[B](block: => B): Task[B] = thenTask(eval(block))
+  def flatThen[B](block: => Task[B]): Task[B] = thenTask(flatEval(block))
   def thenTask[B](t: Task[B]): Task[B] = compose(Transform.fixed(t))
 
-  def `finally`(block: => Any): Task[A] = finallyTask(Eval(block))
-  def flatFinally(taskBlock: => Task[Any]): Task[A] = finallyTask(Flatten(Eval(taskBlock)))
+  def `finally`(block: => Any): Task[A] = finallyTask(eval(block))
+  def flatFinally(taskBlock: => Task[Any]): Task[A] = finallyTask(flatEval(taskBlock))
   def finallyTask(t: Task[Any]): Task[A] = this.compose(Transform.function[A,A]({ tryCompletion: Completion[A] =>
     t.compose(Transform.function[Any,A]({
       case Success(_) => tryCompletion
@@ -46,37 +46,34 @@ final object Task {
   sealed trait Completion[+A] extends Task[A]
 
   case class Success[+A](value: A) extends Completion[A]
-  object Success {
-    val Unit = Success[Unit](())
-  }
+
   case class Failure(throwable: Throwable) extends Completion[Nothing]
-  object Failure {
-    val Empty = Failure(new NoSuchElementException("Task does not contain a value"))
-  }
 
   trait Eval[+A] extends Task[A] {
-    def completed: Boolean
+    def completion: Option[Completion[A]]
     def apply(): A
   }
-  object Eval {
-    def apply[A](body: => A): Eval[A] = new Eval[A] {
-      override def completed: Boolean = false
-      override def apply(): A = body
-    }
-  }
 
-  case class Flatten[+A](t: Task[Task[A]]) extends Task[A]
+  case class Flatten[+A](task: Task[Task[A]]) extends Task[A]
 
-  case class Compose[A,+B](a: Task[A], b: Transform[A,B]) extends Task[B]
+  case class Compose[A,+B](task: Task[A], transform: Transform[A,B]) extends Task[B]
 
   trait Suspend[A] extends Task[A] {
     def suspend(resume: Continuation[A]): Unit
   }
-  object Suspend {
-    def apply[A](f: Continuation[A] => Unit): Suspend[A] = new Suspend[A] {
-      override def suspend(resume: Continuation[A]): Unit = f(resume)
-    }
+
+  val Unit: Success[Unit] = Success[Unit](())
+  val Empty: Failure = Failure(new NoSuchElementException("Empty task has no value"))
+
+  def eval[A](block: => A): Eval[A] = new Eval[A] {
+    override def completion: Option[Completion[A]] = None
+    override def apply(): A = block
   }
+
+  def flatEval[A](block: => Task[A]): Flatten[A] = Flatten(eval(block))
+
+  // Forces a lambda expression to be treated as the single abstract method of a Suspend
+  def suspend[A](suspend: Suspend[A]): Suspend[A] = suspend
 
   /**
    * Creates a task and a future value of its result. Wraps an existing task, extending it,
@@ -108,10 +105,14 @@ final object Task {
     case Flatten(t) =>
       Flatten(simplify(t)) match {
         case Flatten(Success(t)) => t.asInstanceOf[Task[A]]
+        case Flatten(f@Failure(_)) => f
         case x => x.asInstanceOf[Task[A]]
       }
-    case e: Eval[A] if e.completed =>
-      Success(e.apply())
+    case e: Eval[A] =>
+      e.completion match {
+        case Some(c) => c
+        case None => e
+      }
     case x => x
   }
 

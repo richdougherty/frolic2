@@ -4,6 +4,11 @@ import nz.rd.frolic.async.Task
 
 import scala.collection.immutable
 
+/**
+ * A trickle is a functional stream.
+ *
+ * @tparam A The elements contained by this trickle.
+ */
 sealed trait Trickle[+A] {
   def map[B](f: A => B): Trickle[B]
   def flatMap[B](f: A => Trickle[B]): Trickle[B]
@@ -42,6 +47,8 @@ object Trickle {
     override def map[B](f: A => B): Trickle[B] = Computed(task.map((s: Trickle[A]) => s.map(f)))
     override def flatMap[B](f: A => Trickle[B]): Trickle[B] = Computed(task.map((s: Trickle[A]) => s.flatMap(f)))
   }
+
+  def compute[A](block: => Trickle[A]): Computed[A] = Computed(Task.eval(block))
 
   final case class Error(cause: Throwable) extends Trickle[Nothing] {
     override def map[B](f: Nothing => B): Trickle[B] = this
