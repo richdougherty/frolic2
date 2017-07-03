@@ -3,42 +3,53 @@ package nz.rd.frolic.async
 import scala.concurrent.{Future, Promise}
 
 trait Task[+A] {
+
   import Task._
 
   def compose[B](tr: A --> B): Task[B] = Compose(this, tr)
 
-  def map[B](f: A => B): Task[B] = compose(Transform.mapped(f))
+  def map[B](f: A => B): Task[B] = compose(Transform.Function.successMap(f))
+
   def flatMap[B](f: A => Task[B]): Task[B] = Flatten(map(f))
 
   def foreach(f: A => Unit): Task[Unit] = map(f)
+
   def filter(f: A => Boolean): Task[A] = flatMap { x: A =>
     if (f(x)) Success(x) else Failure(new NoSuchElementException("No result after filtering"))
   }
 
   def flatten[B](implicit witness: A <:< Task[B]): Task[B] = Flatten[B](this.asInstanceOf[Task[Task[B]]])
-  def liftCompletion: Task[Completion[A]] = compose { c: Completion[A] => Task.Success(c) }
+
+  def liftCompletion: Task[Completion[A]] = compose(Transform.Function(
+    (s: Success[A]) => Task.Success(s),
+    (f: Failure) => Task.Success(f)
+  ))
 
   // Higher level constructs
 
   def `then`[B](block: => B): Task[B] = thenTask(eval(block))
+
   def flatThen[B](block: => Task[B]): Task[B] = thenTask(flatEval(block))
-  def thenTask[B](t: Task[B]): Task[B] = compose(Transform.fixed(t))
+
+  def thenTask[B](t: Task[B]): Task[B] = compose(new Transform.Function.SuccessTask(t))
 
   def `finally`(block: => Any): Task[A] = finallyTask(eval(block))
-  def flatFinally(taskBlock: => Task[Any]): Task[A] = finallyTask(flatEval(taskBlock))
-  def finallyTask(t: Task[Any]): Task[A] = this.compose(Transform.function[A,A]({ tryCompletion: Completion[A] =>
-    t.compose(Transform.function[Any,A]({
-      case Success(_) => tryCompletion
-      case f@Failure(_) => f // Use Failure in finally block, based on Java exception semantics
-    }))
-  }))
 
-  def `catch`[B >: A](pf: PartialFunction[Throwable, B]): Task[B] = flatCatch(pf.andThen(Success(_)))
-  def `flatCatch`[B >: A](pf: PartialFunction[Throwable, Task[B]]): Task[B] = this.compose(Transform.function({
-    case _@Failure(cause) if pf.isDefinedAt(cause) =>
-      pf(cause)
-    case x => x
-  }))
+  def flatFinally(taskBlock: => Task[Any]): Task[A] = finallyTask(flatEval(taskBlock))
+
+  def finallyTask(task: Task[Any]): Task[A] = compose[A](
+    Transform.Function.fromCompletion[A,A]({ originalCompletion: Completion[A] =>
+      // Run the finally task, and if it succeeds use the original completion of `this` task
+      task.compose(new Transform.Function.SuccessTask(originalCompletion))
+    })
+  )
+
+  def `catch`[B >: A](handler: PartialFunction[Throwable, B]): Task[B] = flatCatch(handler.andThen(Success(_)))
+  def `flatCatch`[B >: A](handler: PartialFunction[Throwable, Task[B]]): Task[B] = compose(
+    new Transform.Function.FailureFlatMap[B]({ t: Throwable =>
+      if (handler.isDefinedAt(t)) handler(t) else Task.Failure(t)
+    })
+  )
 }
 
 final object Task {
@@ -82,14 +93,14 @@ final object Task {
    */
   def toFutureTask[A](t: Task[A]): (Task[A], Future[A]) = {
     val promise = Promise[A]()
-    val promiseTask: Task[A] = t.compose(Transform.function[A,A] {
+    val promiseTask: Task[A] = t.compose(Transform.Function.fromCompletion[A,A]({
       case s@Success(v) =>
         promise.success(v)
         s
       case f@Failure(cause) =>
         promise.failure(cause)
         f
-    })
+    }))
     (promiseTask, promise.future)
   }
 
@@ -98,8 +109,11 @@ final object Task {
     case c: Completion[A] => c
     case Compose(a, transform) =>
       Compose(simplify(a), transform) match {
-        case Compose(_: Completion[_], Transform.Fixed(fixedTask)) => simplify(fixedTask)
-        case Compose(failure@Failure(_), Transform.Map(_)) => failure
+        case Compose(Success(_), Transform.Function.SuccessTask(st)) => simplify(st)
+        case Compose(s@Success(_), _: Transform.Function.FailureFunction[_]) => s.asInstanceOf[Task[A]]
+        case Compose(Failure(_), Transform.Function.FailureTask(ft)) => simplify(ft.asInstanceOf[Task[A]])
+        case Compose(f@Failure(_), _: Transform.Function.FailureFunction[_]) => f
+        case Compose(_: Completion[_], Transform.Function.FixedTask(ft)) => simplify(ft)
         case compose => compose
       }
     case Flatten(t) =>

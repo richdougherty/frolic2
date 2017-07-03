@@ -44,7 +44,7 @@ final object ScalaConcurrentTasks {
   }
 
   private def promiseCompleteTask[A](task: Task[A], promise: Promise[A]): Task[Unit] = {
-    task.compose(Transform.function[A, Unit] {
+    task.compose(Transform.Function.fromCompletion[A, Unit] {
       case Success(v) =>
         promise.success(v)
         Task.Unit

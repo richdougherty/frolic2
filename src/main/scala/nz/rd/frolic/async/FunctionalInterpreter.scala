@@ -15,7 +15,7 @@ class FunctionalInterpreter extends Interpreter {
 
     val runId = runCounter.getAndIncrement()
 
-    val nop: Transform[A,A] = Transform.Function(identity[Task[A]])
+    val nop: Transform[A,A] = Transform.Function(identity[Task[A]], identity[Task[A]])
 
     def log(msg: String): Unit = {
       println(s"[$runId] $msg")
@@ -44,7 +44,7 @@ class FunctionalInterpreter extends Interpreter {
       case compose: Task.Compose[_, _] =>
         // Convert the Compose into a normal form with only one level of Compose and with Transforms joined by Cons
         log("Can't step nested Compose, moving nested task to head position, consing nested transform, then stepping again")
-        Some(Task.Compose(compose.task, Transform.Cons(compose.transform, transform)))
+        Some(Task.Compose(compose.task, Transform.Compose(compose.transform, transform)))
 
       case eval: Task.Eval[_] =>
         // Evaluate the function
@@ -64,10 +64,11 @@ class FunctionalInterpreter extends Interpreter {
 
       case flatten: Task.Flatten[_] =>
         log("Converting Flatten to equivalent Compose/Transform")
-        Some(Task.Compose(flatten.task.compose(Transform.function {
-          case Task.Success(v) => v
-          case f@Task.Failure(_) => f
-        }), transform))
+        val flattenB: Task.Flatten[B] = flatten.asInstanceOf[Task.Flatten[B]]
+        val unflattenedTask: Task[Task[B]] = flattenB.task
+        val flattenTransform: Task[B] --> B = Transform.Function.successFlatMap(identity[Task[B]])
+        val flattened: Task[B] = unflattenedTask.compose(flattenTransform)
+        Some(Task.Compose(flattened, transform))
 
       case suspend: Task.Suspend[_] =>
         // Create a continuation to resume with the result
@@ -103,7 +104,7 @@ class FunctionalInterpreter extends Interpreter {
         log("Composed task was complete, passing completion to transformation")
         transform match {
           case `nop` => None
-          case Transform.Cons(left, right) =>
+          case Transform.Compose(left, right) =>
             stepConsedTransform(completion, left, right)
           case _ => stepConsedTransform(completion, transform, nop)
         }
@@ -111,29 +112,14 @@ class FunctionalInterpreter extends Interpreter {
 
     def stepConsedTransform[B,C](completion: Task.Completion[B], transform: Transform[B,C], nextTransform: Transform[C,A]): Option[Task[A]] = transform match {
 
-      case Transform.Cons(a, b) =>
+      case Transform.Compose(a, b) =>
         // Rearrange cons to a normalized form
         log("Running Cons")
-        Some(Task.Compose(completion, Transform.Cons(a, Transform.Cons(b, nextTransform))))
+        Some(Task.Compose(completion, Transform.Compose(a, Transform.Compose(b, nextTransform))))
 
-      case Transform.Map(f) =>
-        // Apply map function to Success, propagate failure
-        log("Running Map")
-        completion match {
-          case Task.Success(value) =>
-            Some(Task.Compose(try Task.Success(f(value)) catch { case NonFatal(t) => Task.Failure(t) }, nextTransform))
-          case f@Task.Failure(_) =>
-            Some(Task.Compose[Nothing,A](f, nextTransform))
-        }
-
-      case Transform.Function(f) =>
+      case f: Transform.Function[_,_] =>
         log("Running Function")
         Some(Task.Compose(try f(completion) catch { case NonFatal(t) => Task.Failure(t) }, nextTransform))
-
-      case Transform.Fixed(nextTask) =>
-        // Ignore the completed result of the previous task
-        log("Running Fixed")
-        Some(Task.Compose(nextTask, nextTransform))
 
     }
 
