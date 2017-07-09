@@ -5,9 +5,7 @@ import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-final object FunctionalInterpreter extends FunctionalInterpreter
-
-class FunctionalInterpreter extends Interpreter {
+class FunctionalInterpreter(listener: InterpreterListener) extends Interpreter {
 
   private val runCounter = new AtomicLong()
 
@@ -18,7 +16,7 @@ class FunctionalInterpreter extends Interpreter {
     val nop: Transform[A,A] = Transform.Function(identity[Task[A]], identity[Task[A]])
 
     def log(msg: String): Unit = {
-      println(s"[$runId] $msg")
+      //println(s"[$runId] $msg")
     }
 
     @tailrec
@@ -51,12 +49,12 @@ class FunctionalInterpreter extends Interpreter {
         log("Running Eval")
         val nextTask = eval.completion match {
           case None =>
-            println("Eval not complete: evaluating now")
+            log("Eval not complete: evaluating now")
             try Task.Success(eval.apply()) catch {
               case NonFatal(t) => Task.Failure(t)
             }
           case Some(completion) =>
-            println(s"Eval is already complete: $completion")
+            log(s"Eval is already complete: $completion")
             completion
         }
         Some(Task.Compose(nextTask, transform))
@@ -82,6 +80,7 @@ class FunctionalInterpreter extends Interpreter {
               val threadContext = Context.current
               Context.current = suspendedContext
               try {
+                listener.onResume()
                 stepNoTailCall(Task.Compose(c, transform))
               } finally Context.current = threadContext
             } else {
@@ -100,6 +99,7 @@ class FunctionalInterpreter extends Interpreter {
           }
         }
         // The interpreter suspends here. It will start again when resume is called.
+        listener.onSuspend()
         try suspend.asInstanceOf[Task.Suspend[B]].suspend(resume) catch {
           case NonFatal(e) => resume.resumeWithException(e) // Will throw IllegalStateException if k already completed
         }
@@ -131,6 +131,7 @@ class FunctionalInterpreter extends Interpreter {
     val oldContext: Context = Context.current
     Context.current = Context.empty
     try {
+      listener.onStart()
       step(task)
     } finally Context.current = oldContext
   }

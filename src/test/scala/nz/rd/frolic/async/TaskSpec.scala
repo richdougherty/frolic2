@@ -11,7 +11,7 @@ class TaskSpec extends FreeSpec with Matchers with ScalaFutures {
 
   "Task" - {
     def runToFuture[A](t: Task[A]): Future[A] = {
-      ScalaConcurrentTasks.interpretFuture(t, FunctionalInterpreter)
+      ScalaConcurrentTasks.interpretFuture(t, new FunctionalInterpreter(InterpreterListener.nop))
     }
     "Return should yield value" in {
       val t = Task.Success(1)

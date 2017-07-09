@@ -2,6 +2,8 @@ package nz.rd.frolic.example
 
 import java.nio.ByteBuffer
 
+import io.opentracing.mock.MockTracer
+import io.opentracing.util.ThreadLocalActiveSpanSource
 import nz.rd.frolic.Frolic
 import nz.rd.frolic.async.Task
 import nz.rd.frolic.async.trickle.{ByteBlock, Read, SeqBlock, Trickle}
@@ -12,7 +14,8 @@ import scala.annotation.tailrec
 object ExampleApp {
   def main(args: Array[String]): Unit = {
 
-    Frolic.start { request: Request =>
+    val tracer = new MockTracer(new ThreadLocalActiveSpanSource())
+    Frolic.start(tracer) { request: Request =>
       if (request.path == "/plaintext") {
         val response = new Response {
           override val statusCode: Int = 200

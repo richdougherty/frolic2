@@ -5,8 +5,17 @@ trait Interpreter {
 }
 
 trait InterpreterListener {
-  def afterStart(): Unit
-  def beforeSuspend(): Unit
-  def afterResume(): Unit
-  def beforeComplete(): Unit
+  def onStart(): Unit
+  def onSuspend(): Unit
+  def onResume(): Unit
+  def onComplete(): Unit
+}
+
+object InterpreterListener {
+  def nop = new InterpreterListener {
+    override def onStart(): Unit = ()
+    override def onComplete(): Unit = ()
+    override def onSuspend(): Unit = ()
+    override def onResume(): Unit = ()
+  }
 }

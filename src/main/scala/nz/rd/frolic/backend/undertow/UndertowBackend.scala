@@ -1,14 +1,19 @@
 package nz.rd.frolic.backend.undertow
 
 import java.io.IOException
+import java.util
+import java.util.Map
 
+import io.opentracing.propagation.{Format, TextMap}
+import io.opentracing.{ActiveSpan, Tracer}
 import io.undertow.Undertow
 import io.undertow.io.{IoCallback, Sender}
 import io.undertow.server.{HttpHandler, HttpServerExchange}
-import io.undertow.util.SameThreadExecutor
+import io.undertow.util.{HttpString, SameThreadExecutor}
 import nz.rd.frolic.async.trickle.{Read, Trickle}
 import nz.rd.frolic.async.{FunctionalInterpreter, Task, trickle, _}
 import nz.rd.frolic.http.{Request, Response}
+import nz.rd.frolic.integrations.opentracing.OpenTracingInterpreterListener
 
 import scala.util.control.NonFatal
 
@@ -44,9 +49,10 @@ object UndertowBackend {
     }
   }
 
-  def startWrapped(f: Request => Task[Response]): Unit = {
+  def startWrapped(tracer: Tracer)(f: Request => Task[Response]): Unit = {
 
-    start { exchange: HttpServerExchange =>
+    start(tracer) { exchange: HttpServerExchange =>
+
       val request = new Request {
         override def method: String = exchange.getRequestMethod.toString
         override def uri: String = exchange.getRequestURI
@@ -99,26 +105,63 @@ object UndertowBackend {
     }
   }
 
-  def start(f: HttpServerExchange => Task[Unit]): Unit = {
+  def start(tracer: Tracer)(f: HttpServerExchange => Task[Unit]): Unit = {
 
     def httpHandler = new HttpHandler {
 
       override def handleRequest(exchange: HttpServerExchange): Unit = {
+        val span: ActiveSpan = tracer.buildSpan("handle_request").startActive()
+        tracer.extract(
+          Format.Builtin.HTTP_HEADERS,
+          new TextMap {
+            override def put(key: String, value: String): Unit = ???
+            override def iterator(): util.Iterator[Map.Entry[String, String]] = {
+              new util.Iterator[Map.Entry[String,String]] {
+                val headerIterator = exchange.getRequestHeaders.iterator()
+                override def hasNext: Boolean = headerIterator.hasNext
+                override def next(): Map.Entry[String, String] = {
+                  val headerValues = headerIterator.next()
+                  new Map.Entry[String, String] {
+                    override def getKey: String = headerValues.getHeaderName.toString
+                    override def getValue: String = {
+                      assert(headerValues.size() == 1, s"Expected only one header of name ${headerValues.getHeaderName}, got ${headerValues.size}")
+                      headerValues.get(0)
+                    }
+                    override def setValue(value: String): String = ???
+                  }
+                }
+              }
+            }
+          }
+        )
         val t: Task[Unit] = Task.Success(exchange).flatMap(f).`catch` {
           case NonFatal(t) =>
             System.err.println("Failure handling request")
             t.printStackTrace()
         }.`finally` {
+//          tracer.inject(
+//            span.context(),
+//            Format.Builtin.HTTP_HEADERS,
+//            new TextMap {
+//              override def put(key: String, value: String): Unit = {
+//                exchange.getResponseHeaders.put(new HttpString(key), value)
+//              }
+//              override def iterator(): util.Iterator[Map.Entry[String, String]] = ???
+//            }
+//          )
           exchange.endExchange()
         }
-        new FunctionalInterpreter().run(t)
+        val listener = new OpenTracingInterpreterListener(tracer)
+        new FunctionalInterpreter(listener).run(t)
       }
     }
 
+    val port = 8000
     val server: Undertow = Undertow.builder()
-        .addHttpListener(8000, "localhost")
+        .addHttpListener(port, "localhost")
         .setHandler(httpHandler)
         .build()
     server.start()
+    System.err.println(s"Listening on port $port")
   }
 }
