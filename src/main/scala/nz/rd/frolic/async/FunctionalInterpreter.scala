@@ -74,11 +74,16 @@ class FunctionalInterpreter extends Interpreter {
         // Create a continuation to resume with the result
         log("Suspending Suspend task")
         val resume: Continuation[B] = new Continuation[B] {
+          private val suspendedContext = Context.current
           private val called = new AtomicBoolean(false)
 
           private def stepWithCompletion(c: Task.Completion[B]): Unit = {
             if (called.compareAndSet(false, true)) {
-              stepNoTailCall(Task.Compose(c, transform))
+              val threadContext = Context.current
+              Context.current = suspendedContext
+              try {
+                stepNoTailCall(Task.Compose(c, transform))
+              } finally Context.current = threadContext
             } else {
               throw new IllegalStateException("Continuation has already been called")
             }
@@ -123,7 +128,11 @@ class FunctionalInterpreter extends Interpreter {
 
     }
 
-    step(task)
+    val oldContext: Context = Context.current
+    Context.current = Context.empty
+    try {
+      step(task)
+    } finally Context.current = oldContext
   }
 
 }
