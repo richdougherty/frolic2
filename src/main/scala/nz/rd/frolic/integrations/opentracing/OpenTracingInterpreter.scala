@@ -4,45 +4,65 @@ import io.opentracing.{ActiveSpan, Span, Tracer}
 import nz.rd.frolic.async.{Context, InterpreterListener}
 
 final class OpenTracingInterpreterListener(tracer: Tracer) extends InterpreterListener {
-  import OpenTracingInterpreterListener._
 
-  override def onStart(): Unit = {
-    val state = new State
-    // Create run span and push onto thread [refcount = 1]
-    state.runSpan = tracer
-        .buildSpan("RunTask")
+  case class Active(
+    runSpan: ActiveSpan
+  )
+  case class Suspending(
+    suspendingSpan: ActiveSpan
+  )
+  case class Suspended(
+    runSpanContinuation: ActiveSpan.Continuation,
+    supendedSpan: Span
+  )
+
+  val SuspendedKey = new Context.Key[Suspended]("OpenTracingSuspended")
+
+
+  override type ActiveData = Active
+  override type SuspendingData = Suspending
+
+  override def starting(): Active = {
+    val runSpan: ActiveSpan = tracer
+        .buildSpan("task_run")
         .startActive()
-    Context(StateKey) = state
+    Active(runSpan)
   }
-  override def onSuspend(): Unit = {
-    val state = Context(StateKey)
+  override def suspending(activeData: Active): Suspending = {
+    // Build child spans of the run span
+    val suspendingSpan: ActiveSpan = tracer
+        .buildSpan("task_suspending")
+        .startActive() // Activate this until suspended() is called
+    val suspendedSpan: Span = tracer
+        .buildSpan("task_suspended")
+        .startManual() // Manual because we're not activating this yet
 
-    // Create async reference to run span and remove from this thread [refcount = 1]
-    state.runSpanContinuation = state.runSpan.capture()
-    state.runSpan.deactivate()
+    // Capture the run span and stop it in this thread
+    val runContinuation: ActiveSpan.Continuation = activeData.runSpan.capture()
+    activeData.runSpan.deactivate()
 
-    // Start a span to track the suspending activity [refcount = 1]
-    //state.suspendingSpan = tracer.buildSpan("Suspending").startActive()
-
-    // Start a span to track the suspend time [no refcount]
-    state.suspendSpan = tracer.buildSpan("Suspend").startManual()
+    Context(SuspendedKey) = Suspended(runContinuation, suspendedSpan)
+    Suspending(suspendingSpan)
   }
-  override def onResume(): Unit = {
-    val state = Context(StateKey)
 
-    // The suspend has finished
-    state.suspendSpan.finish()
-    state.suspendSpan = null
+  override def suspended(suspendingData: Suspending): Unit = {
+    suspendingData.suspendingSpan.deactivate()
   }
-  override def onComplete(): Unit = {
-    val state = Context(StateKey)
 
-    // Finish span and pop off thread [span refcount = 0]
-    state.runSpan.deactivate()
+  override def resuming(): ActiveData = {
+    val suspendedData: Suspended = Context(SuspendedKey)
+    val runSpan: ActiveSpan = suspendedData.runSpanContinuation.activate()
+    suspendedData.supendedSpan.finish()
+    Context(SuspendedKey) = null // Clear so we can't accidentally use the value twice
+    Active(runSpan)
+  }
+  override def completing(activeData: Active): Unit = {
+    activeData.runSpan.deactivate()
   }
 }
 
 private[opentracing] object OpenTracingInterpreterListener {
+
   class State {
     var runSpan: ActiveSpan = null
     var runSpanContinuation: ActiveSpan.Continuation = null

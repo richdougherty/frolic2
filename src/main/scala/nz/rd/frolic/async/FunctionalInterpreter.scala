@@ -20,24 +20,24 @@ class FunctionalInterpreter(listener: InterpreterListener) extends Interpreter {
     }
 
     @tailrec
-    def step(task: Task[A]): Unit = task match {
+    def step(task: Task[A], listenerData: listener.ActiveData): Unit = task match {
       case Task.Compose(composedTask, transform) =>
         log(s"Stepping Task.Compose($composedTask, $transform)")
-        stepComposedTask(composedTask, transform) match {
+        stepComposedTask(composedTask, transform, listenerData) match {
           case Some(nextTask) =>
             log(s"Got step of $nextTask")
-            step(nextTask)
+            step(nextTask, listenerData)
           case None => ()
         }
       case _ =>
         // Normalize into a Compose
         log("Can't step Task that isn't a Compose, wrapping with Compose then stepping again")
-        step(Task.Compose(task, nop))
+        step(Task.Compose(task, nop), listenerData)
     }
 
-    def stepNoTailCall(t: Task[A]): Unit = step(t)
+    def stepNoTailCall(t: Task[A], listenerData: listener.ActiveData): Unit = step(t, listenerData)
 
-    def stepComposedTask[B](task: Task[B], transform: Transform[B,A]): Option[Task[A]] = task match {
+    def stepComposedTask[B](task: Task[B], transform: Transform[B,A], listenerData: listener.ActiveData): Option[Task[A]] = task match {
 
       case compose: Task.Compose[_, _] =>
         // Convert the Compose into a normal form with only one level of Compose and with Transforms joined by Cons
@@ -80,8 +80,8 @@ class FunctionalInterpreter(listener: InterpreterListener) extends Interpreter {
               val threadContext = Context.current
               Context.current = suspendedContext
               try {
-                listener.onResume()
-                stepNoTailCall(Task.Compose(c, transform))
+                listener.resuming()
+                stepNoTailCall(Task.Compose(c, transform), listenerData)
               } finally Context.current = threadContext
             } else {
               throw new IllegalStateException("Continuation has already been called")
@@ -99,10 +99,11 @@ class FunctionalInterpreter(listener: InterpreterListener) extends Interpreter {
           }
         }
         // The interpreter suspends here. It will start again when resume is called.
-        listener.onSuspend()
+        val suspendingData: listener.SuspendingData = listener.suspending(listenerData)
         try suspend.asInstanceOf[Task.Suspend[B]].suspend(resume) catch {
           case NonFatal(e) => resume.resumeWithException(e) // Will throw IllegalStateException if k already completed
         }
+        listener.suspended(suspendingData)
         None
 
       case completion: Task.Completion[_] =>
@@ -131,8 +132,8 @@ class FunctionalInterpreter(listener: InterpreterListener) extends Interpreter {
     val oldContext: Context = Context.current
     Context.current = Context.empty
     try {
-      listener.onStart()
-      step(task)
+      val data: listener.ActiveData = listener.starting()
+      step(task, data)
     } finally Context.current = oldContext
   }
 
