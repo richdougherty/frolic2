@@ -8,11 +8,14 @@ final class Context(untyped: immutable.Map[Context.Key[_], _]) {
   def get[T](k: Key[T]): Option[T] = untyped.get(k).asInstanceOf[Option[T]]
   def updated[T](k: Key[T], v: T): Context = new Context(untyped.updated(k, v))
 
+  override def toString: String = s"Context($untyped)"
 }
 
 object Context {
   val empty: Context = new Context(immutable.Map.empty)
-  final class Key[T](name: String)
+  final class Key[T](name: String) {
+    override def toString: String = s"Context.Key($name)"
+  }
 
   private val threadLocal = new ThreadLocal[Context]
   def current: Context = {

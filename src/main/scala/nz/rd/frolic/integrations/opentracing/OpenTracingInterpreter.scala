@@ -5,19 +5,7 @@ import nz.rd.frolic.async.{Context, InterpreterListener}
 
 final class OpenTracingInterpreterListener(tracer: Tracer) extends InterpreterListener {
 
-  case class Active(
-    runSpan: ActiveSpan
-  )
-  case class Suspending(
-    suspendingSpan: ActiveSpan
-  )
-  case class Suspended(
-    runSpanContinuation: ActiveSpan.Continuation,
-    supendedSpan: Span
-  )
-
-  val SuspendedKey = new Context.Key[Suspended]("OpenTracingSuspended")
-
+  import OpenTracingInterpreterListener._
 
   override type ActiveData = Active
   override type SuspendingData = Suspending
@@ -52,7 +40,7 @@ final class OpenTracingInterpreterListener(tracer: Tracer) extends InterpreterLi
   override def resuming(): ActiveData = {
     val suspendedData: Suspended = Context(SuspendedKey)
     val runSpan: ActiveSpan = suspendedData.runSpanContinuation.activate()
-    suspendedData.supendedSpan.finish()
+    suspendedData.suspendedSpan.finish()
     Context(SuspendedKey) = null // Clear so we can't accidentally use the value twice
     Active(runSpan)
   }
@@ -62,12 +50,16 @@ final class OpenTracingInterpreterListener(tracer: Tracer) extends InterpreterLi
 }
 
 private[opentracing] object OpenTracingInterpreterListener {
+  case class Active(
+      runSpan: ActiveSpan
+  )
+  case class Suspending(
+      suspendingSpan: ActiveSpan
+  )
+  case class Suspended(
+      runSpanContinuation: ActiveSpan.Continuation,
+      suspendedSpan: Span
+  )
 
-  class State {
-    var runSpan: ActiveSpan = null
-    var runSpanContinuation: ActiveSpan.Continuation = null
-    var suspendSpan: Span = null
-  }
-
-  val StateKey = new Context.Key[State]("OpenTracingState")
+  val SuspendedKey = new Context.Key[Suspended]("OpenTracingSuspended")
 }

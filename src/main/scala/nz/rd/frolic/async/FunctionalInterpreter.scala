@@ -69,8 +69,10 @@ class FunctionalInterpreter(listener: InterpreterListener) extends Interpreter {
         Some(Task.Compose(flattened, transform))
 
       case suspend: Task.Suspend[_] =>
-        // Create a continuation to resume with the result
         log("Suspending Suspend task")
+        val suspendingData: listener.SuspendingData = listener.suspending(listenerData)
+
+        // Create a continuation to resume with the result
         val resume: Continuation[B] = new Continuation[B] {
           private val suspendedContext = Context.current
           private val called = new AtomicBoolean(false)
@@ -84,7 +86,7 @@ class FunctionalInterpreter(listener: InterpreterListener) extends Interpreter {
                 stepNoTailCall(Task.Compose(c, transform), listenerData)
               } finally Context.current = threadContext
             } else {
-              throw new IllegalStateException("Continuation has already been called")
+              throw new IllegalStateException(s"Continuation has already been called. Called with: $c")
             }
           }
 
@@ -99,7 +101,6 @@ class FunctionalInterpreter(listener: InterpreterListener) extends Interpreter {
           }
         }
         // The interpreter suspends here. It will start again when resume is called.
-        val suspendingData: listener.SuspendingData = listener.suspending(listenerData)
         try suspend.asInstanceOf[Task.Suspend[B]].suspend(resume) catch {
           case NonFatal(e) => resume.resumeWithException(e) // Will throw IllegalStateException if k already completed
         }
