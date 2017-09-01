@@ -20,6 +20,8 @@ object Context {
   private val threadLocal = new ThreadLocal[Context]
   def current: Context = {
     val c = threadLocal.get
+    // Since Context is immutable, as a slight optimization we can return
+    // Context.empty without setting it into the ThreadLocal map.
     if (c == null) Context.empty else c
   }
   def current_=(newContext: Context): Unit = {

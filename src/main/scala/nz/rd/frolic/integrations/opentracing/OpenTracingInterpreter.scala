@@ -1,65 +1,156 @@
 package nz.rd.frolic.integrations.opentracing
 
-import io.opentracing.{ActiveSpan, Span, Tracer}
+import io.opentracing.{ActiveSpan, References, Span, Tracer}
 import nz.rd.frolic.async.{Context, InterpreterListener}
+import nz.rd.frolic.integrations.opentracing.OpenTracingInterpreterListener.SuspendedKey
+import nz.rd.frolic.integrations.opentracing.SuspendableActiveSpanSource.StackContinuation
 
-final class OpenTracingInterpreterListener(tracer: Tracer) extends InterpreterListener {
+import scala.annotation.tailrec
+
+final class OpenTracingInterpreterListener(tracer: SuspendableTracer) extends InterpreterListener {
 
   import OpenTracingInterpreterListener._
 
-  override type ActiveData = Active
-  override type SuspendingData = Suspending
+  override type ActiveData = OrigLocalStack
+  override type SuspendingData = OrigLocalStack
+  override type ResumingData = OrigLocalStackAndTaskStack
 
-  override def starting(): Active = {
-    val runSpan: ActiveSpan = tracer
-        .buildSpan("task_run")
-        .startActive()
-    Active(runSpan)
-  }
-  override def suspending(activeData: Active): Suspending = {
-    // Build child spans of the run span
-    val suspendingSpan: ActiveSpan = tracer
-        .buildSpan("task_suspending")
-        .startActive() // Activate this until suspended() is called
-    val suspendedSpan: Span = tracer
-        .buildSpan("task_suspended")
-        .startManual() // Manual because we're not activating this yet
+  private def activeSpanSource: SuspendableActiveSpanSource = tracer.suspendableActiveSpanSource
 
-    // Capture the run span and stop it in this thread
-    val runContinuation: ActiveSpan.Continuation = activeData.runSpan.capture()
-    activeData.runSpan.deactivate()
+  override def starting(): OrigLocalStack = {
+    println("<starting>")
 
-    Context(SuspendedKey) = Suspended(runContinuation, suspendedSpan)
-    Suspending(suspendingSpan)
+    val taskSpan: Span = tracer.buildSpan("task").startManual()
+
+    // Capture the original local stack then detach it from this thread
+    val localStackK: StackContinuation = activeSpanSource.captureStack()
+    activeSpanSource.deactivateStack()
+
+    // Active task span in its new empty stack
+    tracer.makeActive(taskSpan)
+
+    OrigLocalStack(localStackK)
   }
 
-  override def suspended(suspendingData: Suspending): Unit = {
-    suspendingData.suspendingSpan.deactivate()
+  override def suspending(origLocalStack: OrigLocalStack): OrigLocalStack = {
+    println("<suspending>")
+
+    val suspendSpan: Span = tracer.buildSpan("suspend").startManual()
+
+    // Create span with 'suspend' as parent, but don't attach
+    val suspendingSpan: Span = tracer.buildSpan("suspending").asChildOf(suspendSpan).startManual()
+
+    // Suspend the task stack and remove it from the local thread
+    val taskStackK: StackContinuation = activeSpanSource.captureStack()
+
+    // Make the current stack empty
+    activeSpanSource.deactivateStack()
+
+    // Save the suspend info for when we resume
+    Context(SuspendedKey) = TracingSuspendedContextData(taskStackK, suspendSpan)
+
+    // Now we have an empty stack with just the 'suspending' span on it
+    tracer.makeActive(suspendingSpan)
+
+    origLocalStack
   }
 
-  override def resuming(): ActiveData = {
-    val suspendedData: Suspended = Context(SuspendedKey)
-    val runSpan: ActiveSpan = suspendedData.runSpanContinuation.activate()
-    suspendedData.suspendedSpan.finish()
+  override def suspended(origLocalStack: OrigLocalStack): Unit = {
+    println("<suspended>")
+
+    activeSpanSource.deactivateStack()
+    origLocalStack.origLocalStack.activate()
+  }
+
+  override def resuming(): OrigLocalStackAndTaskStack = {
+    println("<resuming>")
+
+    val suspendedInfo: TracingSuspendedContextData = Context(SuspendedKey)
     Context(SuspendedKey) = null // Clear so we can't accidentally use the value twice
-    Active(runSpan)
+
+    // Create span with 'suspend' as parent, but don't attach
+    val resumingSpan: Span = tracer.buildSpan("resuming").asChildOf(suspendedInfo.suspendSpan).startManual()
+
+    // Capture the original local stack then detach it from this thread
+    val localStackK: StackContinuation = activeSpanSource.captureStack()
+    activeSpanSource.deactivateStack()
+
+    // Active resuming span in its new empty stack
+    tracer.makeActive(resumingSpan)
+
+    // Declare ths suspend span as finished (although resuming might still take some time)
+    suspendedInfo.suspendSpan.finish()
+
+    OrigLocalStackAndTaskStack(localStackK, suspendedInfo.taskStackK)
   }
-  override def completing(activeData: Active): Unit = {
-    activeData.runSpan.deactivate()
+
+  override def resumed(origLocalStackAndTaskStack: OrigLocalStackAndTaskStack): OrigLocalStack = {
+    println("<resumed>")
+
+    // Clear resuming stack
+    activeSpanSource.deactivateStack()
+
+    // Activate task stack
+    origLocalStackAndTaskStack.taskStack.activate()
+
+    OrigLocalStack(origLocalStackAndTaskStack.origLocalStack)
+  }
+
+  override def completing(origLocalStack: OrigLocalStack): Unit = {
+    println("<completing>")
+
+    // Clear task stack
+    activeSpanSource.deactivateStack()
+
+    // Reactivate original thread local stack
+    origLocalStack.origLocalStack.activate()
   }
 }
 
 private[opentracing] object OpenTracingInterpreterListener {
-  case class Active(
-      runSpan: ActiveSpan
-  )
-  case class Suspending(
-      suspendingSpan: ActiveSpan
-  )
-  case class Suspended(
-      runSpanContinuation: ActiveSpan.Continuation,
-      suspendedSpan: Span
+
+  case class TracingSuspended(
+      taskStackK: StackContinuation
   )
 
-  val SuspendedKey = new Context.Key[Suspended]("OpenTracingSuspended")
+  case class OrigLocalStack(
+      origLocalStack: StackContinuation
+  )
+
+  case class OrigLocalStackAndTaskStack(
+      origLocalStack: StackContinuation,
+      taskStack: StackContinuation
+  )
+
+  case class TracingSuspendedContextData(
+      taskStackK: StackContinuation,
+      suspendSpan: Span
+  )
+//
+//  case class TracingActiveData(
+//      localStackK: StackContinuation,
+//      taskSpan: ActiveSpan
+//  )
+//
+//  case class SuspendedContextData(
+//      taskStackK: StackContinuation,
+//      runSpan: ActiveSpan,
+//      suspendSpan: ActiveSpan
+//  )
+//
+//  case class TracingSuspendingData(
+//      operationSpan: ActiveSpan, // either start or resume
+//      runSpan: ActiveSpan
+//  )
+//
+//  case class Suspend(
+//      origSpanContinuation: ActiveSpan.Continuation,
+//      suspendSpanContinuation: ActiveSpan.Continuation
+//  )
+//  case class Resuming(
+//      runSpanContinuation: ActiveSpan.Continuation,
+//      suspendSpan: ActiveSpan
+//  )
+
+  val SuspendedKey = new Context.Key[TracingSuspendedContextData]("OpenTracingSuspended")
 }

@@ -5,6 +5,7 @@ package nz.rd.frolic.async
  * coroutine implementation.
  */
 trait Continuation[-A] {
-  def resume(value: A): Unit
-  def resumeWithException(cause: Throwable): Unit
+  def resume(value: A): Unit = resumeWithThunk(Task.Success(value))
+  def resumeWithException(cause: Throwable): Unit = resumeWithThunk(Task.Failure(cause))
+  def resumeWithThunk(thunk: => Task.Completion[A]): Unit
 }

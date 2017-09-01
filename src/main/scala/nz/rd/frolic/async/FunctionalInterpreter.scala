@@ -27,7 +27,9 @@ class FunctionalInterpreter(listener: InterpreterListener) extends Interpreter {
           case Some(nextTask) =>
             log(s"Got step of $nextTask")
             step(nextTask, listenerData)
-          case None => ()
+          case None =>
+            listener.completing(listenerData)
+            ()
         }
       case _ =>
         // Normalize into a Compose
@@ -77,32 +79,37 @@ class FunctionalInterpreter(listener: InterpreterListener) extends Interpreter {
           private val suspendedContext = Context.current
           private val called = new AtomicBoolean(false)
 
-          private def stepWithCompletion(c: Task.Completion[B]): Unit = {
+          override def resumeWithThunk(thunk: => Task.Completion[B]): Unit = {
             if (called.compareAndSet(false, true)) {
               val threadContext = Context.current
               Context.current = suspendedContext
               try {
-                listener.resuming()
-                stepNoTailCall(Task.Compose(c, transform), listenerData)
+                val resumingData = listener.resuming()
+                val completion: Task.Completion[B] = thunk
+                listener.resumed(resumingData)
+                stepNoTailCall(Task.Compose(completion, transform), listenerData)
               } finally Context.current = threadContext
             } else {
-              throw new IllegalStateException(s"Continuation has already been called. Called with: $c")
+              throw new IllegalStateException(s"Task.Suspend's Continuation has already been called.")
             }
           }
 
           override def resume(value: B): Unit = {
             log(s"Resume called on suspended task with value $value")
-            stepWithCompletion(Task.Success(value))
+            resumeWithThunk(Task.Success(value))
           }
 
           override def resumeWithException(cause: Throwable): Unit = {
             log(s"Resume called on suspended task with exception $cause")
-            stepWithCompletion(Task.Failure(cause))
+            resumeWithThunk(Task.Failure(cause))
           }
         }
         // The interpreter suspends here. It will start again when resume is called.
         try suspend.asInstanceOf[Task.Suspend[B]].suspend(resume) catch {
-          case NonFatal(e) => resume.resumeWithException(e) // Will throw IllegalStateException if k already completed
+          case NonFatal(e) =>
+            System.err.println("Error occurred during suspend operation, attempting to resume with error. Will fail if suspend has also resumed.")
+            e.printStackTrace()
+            resume.resumeWithException(e) // Will throw IllegalStateException if k already completed
         }
         listener.suspended(suspendingData)
         None

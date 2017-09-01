@@ -5,7 +5,7 @@ import java.util
 import java.util.Map
 
 import io.opentracing.propagation.{Format, TextMap}
-import io.opentracing.{ActiveSpan, Tracer}
+import io.opentracing.{ActiveSpan, Span, Tracer}
 import io.undertow.Undertow
 import io.undertow.io.{IoCallback, Sender}
 import io.undertow.server.{HttpHandler, HttpServerExchange}
@@ -17,7 +17,7 @@ import nz.rd.frolic.integrations.opentracing.OpenTracingInterpreterListener
 
 import scala.util.control.NonFatal
 
-object UndertowBackend {
+class UndertowBackend(tracer: Tracer) {
 
   /**
    * Creates a task that suspends the computation until an [[IoCallback]] is called.
@@ -37,21 +37,30 @@ object UndertowBackend {
    * ioSuspend(sender.send("Hello world", _))
    * ```
    */
-  def ioSuspend(undertowIo: IoCallback => Unit): Task.Suspend[Unit] = {
-    println("Suspending until Undertow calls back")
+  def ioSuspend(ioSpanName: String)(undertowIo: IoCallback => Unit): Task.Suspend[Unit] = {
     Task.suspend { k: Continuation[Unit] =>
+      val ioSpan: ActiveSpan = tracer.buildSpan(ioSpanName).startActive()
       undertowIo(new IoCallback {
-        override def onComplete(exchange: HttpServerExchange, sender: Sender): Unit =
-          k.resume(())
+        private def resume(logMessage: String, completion: Task.Completion[Unit]): Unit = {
+          k.resumeWithThunk {
+            //assert(tracer.activeSpan() == ioSpan, "Resumed with incorrect ActiveSpan")
+            ioSpan.log(logMessage)
+            ioSpan.deactivate()
+            completion
+          }
+        }
+        override def onComplete(exchange: HttpServerExchange, sender: Sender): Unit = {
+          resume("IO complete", Task.Success(()))
+        }
         override def onException(exchange: HttpServerExchange, sender: Sender, exception: IOException): Unit =
-          k.resumeWithException(exception)
+          resume("IO exception", Task.Failure(exception))
       })
     }
   }
 
-  def startWrapped(tracer: Tracer)(f: Request => Task[Response]): Unit = {
+  def startWrapped(interpreter: Interpreter, tracer: Tracer)(f: Request => Task[Response]): Unit = {
 
-    start(tracer) { exchange: HttpServerExchange =>
+    start(interpreter, tracer) { exchange: HttpServerExchange =>
 
       val request = new Request {
         override def method: String = exchange.getRequestMethod.toString
@@ -61,12 +70,14 @@ object UndertowBackend {
           new StreamSourceChannelTasks(exchange.getRequestChannel()).stream()
         }
       }
+
+      def senderTasks = new SenderTasks(tracer, exchange.getResponseSender())
+
       f(request).flatMap { response: Response =>
 
         Task.flatEval {
           def sendRead(r: Read[Byte]): Task[Unit] = {
-            val sender: Sender = exchange.getResponseSender()
-            new SenderTasks(sender).send(r)
+            senderTasks.send(r)
           }
 
           val bodyStream: Trickle[Byte] = response.body
@@ -96,8 +107,7 @@ object UndertowBackend {
                 })
               }.flatThen { sendRead(computed) }
             case otherRead =>
-              val sender: Sender = exchange.getResponseSender()
-              new SenderTasks(sender).send(otherRead)
+              senderTasks.send(otherRead)
           }
         }.finallyTask(response.onDone)
 
@@ -105,7 +115,7 @@ object UndertowBackend {
     }
   }
 
-  def start(tracer: Tracer)(f: HttpServerExchange => Task[Unit]): Unit = {
+  def start(interpreter: Interpreter, tracer: Tracer)(f: HttpServerExchange => Task[Unit]): Unit = {
 
     def httpHandler = new HttpHandler {
 
@@ -151,8 +161,7 @@ object UndertowBackend {
 //          )
           exchange.endExchange()
         }
-        val listener = new OpenTracingInterpreterListener(tracer)
-        new FunctionalInterpreter(listener).run(t)
+        interpreter.run(t)
       }
     }
 
