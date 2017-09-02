@@ -15,7 +15,7 @@ private[opentracing] class SuspendableActiveSpan (
     val thisSpan = this
     source.localStack.get match {
       case `thisSpan` :: tail => source.localStack.set(tail)
-      case stack => throw new IllegalStateException(s"Can't deactivate ActiveSpan that isn't active: $stack")
+      case stack => throw new IllegalStateException(s"Can't deactivate ActiveSpan $this that isn't on top of stack $stack")
     }
   }
 

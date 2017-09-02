@@ -39,13 +39,12 @@ class UndertowBackend(tracer: Tracer) {
    */
   def ioSuspend(ioSpanName: String)(undertowIo: IoCallback => Unit): Task.Suspend[Unit] = {
     Task.suspend { k: Continuation[Unit] =>
-      val ioSpan: ActiveSpan = tracer.buildSpan(ioSpanName).startActive()
+      val ioSpan: Span = tracer.buildSpan(ioSpanName).startManual()
       undertowIo(new IoCallback {
         private def resume(logMessage: String, completion: Task.Completion[Unit]): Unit = {
           k.resumeWithThunk {
-            //assert(tracer.activeSpan() == ioSpan, "Resumed with incorrect ActiveSpan")
             ioSpan.log(logMessage)
-            ioSpan.deactivate()
+            ioSpan.finish()
             completion
           }
         }

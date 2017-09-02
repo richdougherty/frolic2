@@ -1,11 +1,8 @@
 package nz.rd.frolic.integrations.opentracing
 
-import io.opentracing.{ActiveSpan, References, Span, Tracer}
+import io.opentracing.Span
 import nz.rd.frolic.async.{Context, InterpreterListener}
-import nz.rd.frolic.integrations.opentracing.OpenTracingInterpreterListener.SuspendedKey
 import nz.rd.frolic.integrations.opentracing.SuspendableActiveSpanSource.StackContinuation
-
-import scala.annotation.tailrec
 
 final class OpenTracingInterpreterListener(tracer: SuspendableTracer) extends InterpreterListener {
 
@@ -18,8 +15,6 @@ final class OpenTracingInterpreterListener(tracer: SuspendableTracer) extends In
   private def activeSpanSource: SuspendableActiveSpanSource = tracer.suspendableActiveSpanSource
 
   override def starting(): OrigLocalStack = {
-    println("<starting>")
-
     val taskSpan: Span = tracer.buildSpan("task").startManual()
 
     // Capture the original local stack then detach it from this thread
@@ -33,8 +28,6 @@ final class OpenTracingInterpreterListener(tracer: SuspendableTracer) extends In
   }
 
   override def suspending(origLocalStack: OrigLocalStack): OrigLocalStack = {
-    println("<suspending>")
-
     val suspendSpan: Span = tracer.buildSpan("suspend").startManual()
 
     // Create span with 'suspend' as parent, but don't attach
@@ -56,15 +49,11 @@ final class OpenTracingInterpreterListener(tracer: SuspendableTracer) extends In
   }
 
   override def suspended(origLocalStack: OrigLocalStack): Unit = {
-    println("<suspended>")
-
     activeSpanSource.deactivateStack()
     origLocalStack.origLocalStack.activate()
   }
 
   override def resuming(): OrigLocalStackAndTaskStack = {
-    println("<resuming>")
-
     val suspendedInfo: TracingSuspendedContextData = Context(SuspendedKey)
     Context(SuspendedKey) = null // Clear so we can't accidentally use the value twice
 
@@ -85,8 +74,6 @@ final class OpenTracingInterpreterListener(tracer: SuspendableTracer) extends In
   }
 
   override def resumed(origLocalStackAndTaskStack: OrigLocalStackAndTaskStack): OrigLocalStack = {
-    println("<resumed>")
-
     // Clear resuming stack
     activeSpanSource.deactivateStack()
 
@@ -97,8 +84,6 @@ final class OpenTracingInterpreterListener(tracer: SuspendableTracer) extends In
   }
 
   override def completing(origLocalStack: OrigLocalStack): Unit = {
-    println("<completing>")
-
     // Clear task stack
     activeSpanSource.deactivateStack()
 
@@ -126,31 +111,6 @@ private[opentracing] object OpenTracingInterpreterListener {
       taskStackK: StackContinuation,
       suspendSpan: Span
   )
-//
-//  case class TracingActiveData(
-//      localStackK: StackContinuation,
-//      taskSpan: ActiveSpan
-//  )
-//
-//  case class SuspendedContextData(
-//      taskStackK: StackContinuation,
-//      runSpan: ActiveSpan,
-//      suspendSpan: ActiveSpan
-//  )
-//
-//  case class TracingSuspendingData(
-//      operationSpan: ActiveSpan, // either start or resume
-//      runSpan: ActiveSpan
-//  )
-//
-//  case class Suspend(
-//      origSpanContinuation: ActiveSpan.Continuation,
-//      suspendSpanContinuation: ActiveSpan.Continuation
-//  )
-//  case class Resuming(
-//      runSpanContinuation: ActiveSpan.Continuation,
-//      suspendSpan: ActiveSpan
-//  )
 
   val SuspendedKey = new Context.Key[TracingSuspendedContextData]("OpenTracingSuspended")
 }
