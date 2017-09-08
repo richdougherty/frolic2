@@ -4,12 +4,11 @@ import java.nio.ByteBuffer
 
 import brave.Tracing
 import brave.opentracing.BraveTracer
-import io.opentracing.{ActiveSpanSource, Tracer}
 import io.opentracing.mock.MockTracer
-import io.opentracing.util.ThreadLocalActiveSpanSource
+import io.opentracing.{NoopTracerFactory, Tracer}
 import nz.rd.frolic.Frolic
-import nz.rd.frolic.async.{FunctionalInterpreter, Task}
 import nz.rd.frolic.async.trickle.{ByteBlock, Read, SeqBlock, Trickle}
+import nz.rd.frolic.async.{FunctionalInterpreter, Task}
 import nz.rd.frolic.http.{Request, Response}
 import nz.rd.frolic.integrations.opentracing.{OpenTracingInterpreterListener, SuspendableActiveSpanSource, SuspendableTracer}
 import zipkin.reporter.AsyncReporter
@@ -22,6 +21,7 @@ object ExampleApp {
 
 //    val useJaeger = args.contains("tracer=jaeger")
     val useZipkin = args.contains("tracer=zipkin")
+    val useMock = args.contains("tracer=zipkin")
 
 
     val tracer: SuspendableTracer = {
@@ -42,7 +42,7 @@ object ExampleApp {
       //      conf.getTracer()
       //    } else
         if (useZipkin) {
-          println("Using Zipkin for tracing")
+          //println("Using Zipkin for tracing")
           val sender = OkHttpSender.create("http://localhost:9411/api/v1/spans")
           val reporter = AsyncReporter.builder(sender).build()
           val braveTracing = Tracing.newBuilder()
@@ -53,9 +53,11 @@ object ExampleApp {
               .activeSpanSource(suspendableActiveSpanSource)
               .build()
 
-        } else {
-          println("Using mock tracing")
+        } else if (useMock) {
+          //println("Using mock tracing")
           new MockTracer(suspendableActiveSpanSource)
+        } else {
+          NoopTracerFactory.create()
         }
       new SuspendableTracer(underlyingTracer, suspendableActiveSpanSource)
     }
@@ -73,11 +75,11 @@ object ExampleApp {
       } else {
 
         def readStreamSize(stream: Trickle[Byte]): Task[Int] = {
-          println("Starting reading stream size")
+          //println("Starting reading stream size")
           @tailrec
           def readLoop(acc: Int, read: Read[Byte]): Task[Int] = read match {
             case Read.Done => {
-              println(s"Finished reading stream size: $acc")
+              //println(s"Finished reading stream size: $acc")
               Task.Success(acc)
             }
             case Read.Error(t) => Task.Failure(t)

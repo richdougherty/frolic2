@@ -11,6 +11,7 @@ import nz.rd.frolic.http.{Request, Response}
 import scala.annotation.tailrec
 
 object Frolic {
+
   def start(interpreter: Interpreter, tracer: Tracer)(f: Request => Task[Response]): Unit = {
 
     val terminal: Terminal = {
@@ -36,7 +37,7 @@ object Frolic {
       if (keyStroke.getKeyType == KeyType.Escape) {
         server.stop()
       } else {
-        println(s"Ignoring: $keyStroke")
+        //println(s"Ignoring: $keyStroke")
         waitForEscape()
       }
     }

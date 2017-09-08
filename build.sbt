@@ -12,6 +12,7 @@ libraryDependencies ++= Seq(
   // OpenTracing
   "io.opentracing" % "opentracing-api" % "0.30.0",
   "io.opentracing" % "opentracing-util" % "0.30.0",
+  "io.opentracing" % "opentracing-noop" % "0.30.0",
   "io.opentracing" % "opentracing-mock" % "0.30.0",
   // Zipkin
   "io.opentracing.brave" % "brave-opentracing" % "0.21.0",

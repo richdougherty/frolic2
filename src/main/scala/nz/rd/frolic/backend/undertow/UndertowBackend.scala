@@ -81,23 +81,23 @@ class UndertowBackend(tracer: Tracer) {
           val bodyRead: Read[Byte] = Read.fromStream(bodyStream)
           bodyRead match {
             case Read.Done =>
-              println("Undertow backend: response body is Done")
+              //println("Undertow backend: response body is Done")
               exchange.setStatusCode(response.statusCode)
               Task.Unit
             case Read.Error(t) =>
-              println("Undertow backend: response body is Error")
+              //println("Undertow backend: response body is Error")
               exchange.setStatusCode(500)
               t.printStackTrace()
               Task.Failure(t)
             case available: Read.Available[Byte] =>
-              println(s"Undertow backend: response body has available data: ${available.piece}")
+              //println(s"Undertow backend: response body has available data: ${available.piece}")
               sendRead(available)
             case computed: Read.Computed[Byte] =>
               // "Dispatch" to same thread to avoid exchange being ended automatically. Staying on the same thread
               // makes it possible to do some processing without paying the price of a thread context switch. It is the
               // responsibility of the caller to avoid blocking the IO thread by switching to another thread if
               // necessary.
-              println(s"Undertow backend: response body needs computing")
+              //println(s"Undertow backend: response body needs computing")
               Task.suspend { resume: Continuation[Unit] =>
                 exchange.dispatch(SameThreadExecutor.INSTANCE, new Runnable() {
                   override def run(): Unit = resume.resume(())
