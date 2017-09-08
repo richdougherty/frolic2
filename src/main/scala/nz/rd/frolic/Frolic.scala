@@ -1,5 +1,6 @@
 package nz.rd.frolic
 
+import com.googlecode.lanterna.TextColor
 import com.googlecode.lanterna.input.{KeyStroke, KeyType}
 import com.googlecode.lanterna.terminal.{DefaultTerminalFactory, Terminal}
 import io.opentracing.Tracer
@@ -29,8 +30,9 @@ object Frolic {
         .setHandler(undertowHandler)
         .build()
     server.start()
+    terminal.setForegroundColor(TextColor.ANSI.CYAN)
     System.err.println(s"Listening on port $port. Press [Escape] to exit.")
-
+    terminal.setForegroundColor(TextColor.ANSI.WHITE)
     @tailrec
     def waitForEscape(): Unit = {
       val keyStroke: KeyStroke = terminal.readInput()

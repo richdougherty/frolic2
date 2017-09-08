@@ -1,6 +1,7 @@
 package nz.rd.frolic.example
 
 import java.nio.ByteBuffer
+import java.util.logging.{Level, LogManager}
 
 import brave.Tracing
 import brave.opentracing.BraveTracer
@@ -18,6 +19,14 @@ import scala.annotation.tailrec
 
 object ExampleApp {
   def main(args: Array[String]): Unit = {
+
+    // Reduce logging for Java's builtin logging - used by Undertow/Xnio
+    // if no other logging framework is configured.
+    val rootLogger = LogManager.getLogManager.getLogger("")
+    rootLogger.setLevel(Level.WARNING)
+    for (h <- rootLogger.getHandlers) {
+      h.setLevel(Level.WARNING)
+    }
 
 //    val useJaeger = args.contains("tracer=jaeger")
     val useZipkin = args.contains("tracer=zipkin")
