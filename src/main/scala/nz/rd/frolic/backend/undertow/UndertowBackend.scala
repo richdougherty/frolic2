@@ -6,14 +6,12 @@ import java.util.Map
 
 import io.opentracing.propagation.{Format, TextMap}
 import io.opentracing.{ActiveSpan, Span, Tracer}
-import io.undertow.Undertow
 import io.undertow.io.{IoCallback, Sender}
 import io.undertow.server.{HttpHandler, HttpServerExchange}
-import io.undertow.util.{HttpString, SameThreadExecutor}
+import io.undertow.util.SameThreadExecutor
 import nz.rd.frolic.async.trickle.{Read, Trickle}
-import nz.rd.frolic.async.{FunctionalInterpreter, Task, trickle, _}
+import nz.rd.frolic.async.{Task, _}
 import nz.rd.frolic.http.{Request, Response}
-import nz.rd.frolic.integrations.opentracing.OpenTracingInterpreterListener
 
 import scala.util.control.NonFatal
 
@@ -57,9 +55,9 @@ class UndertowBackend(tracer: Tracer) {
     }
   }
 
-  def startWrapped(interpreter: Interpreter, tracer: Tracer)(f: Request => Task[Response]): Unit = {
+  def handlerForFrolicModel(interpreter: Interpreter, tracer: Tracer)(f: Request => Task[Response]): HttpHandler = {
 
-    start(interpreter, tracer) { exchange: HttpServerExchange =>
+    handlerForUndertowModel(interpreter, tracer) { exchange: HttpServerExchange =>
 
       val request = new Request {
         override def method: String = exchange.getRequestMethod.toString
@@ -114,9 +112,8 @@ class UndertowBackend(tracer: Tracer) {
     }
   }
 
-  def start(interpreter: Interpreter, tracer: Tracer)(f: HttpServerExchange => Task[Unit]): Unit = {
-
-    def httpHandler = new HttpHandler {
+  def handlerForUndertowModel(interpreter: Interpreter, tracer: Tracer)(f: HttpServerExchange => Task[Unit]): HttpHandler = {
+    new HttpHandler {
 
       override def handleRequest(exchange: HttpServerExchange): Unit = {
         val span: ActiveSpan = tracer.buildSpan("handle_request").startActive()
@@ -164,12 +161,5 @@ class UndertowBackend(tracer: Tracer) {
       }
     }
 
-    val port = 8000
-    val server: Undertow = Undertow.builder()
-        .addHttpListener(port, "localhost")
-        .setHandler(httpHandler)
-        .build()
-    server.start()
-    System.err.println(s"Listening on port $port")
   }
 }
