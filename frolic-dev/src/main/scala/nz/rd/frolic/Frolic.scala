@@ -46,5 +46,3 @@ object Frolic {
     waitForEscape()
   }
 }
-
-
